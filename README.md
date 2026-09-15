@@ -2,22 +2,12 @@
 
 [[`Blog`](https://openvdn.github.io/)] [[`Code`](https://github.com/OpenVDN/vdn-minimax-h3)] [[`🤗 Weights`](https://huggingface.co/OpenVDN/vdn-minimax-h3)] [[`ModelScope`](https://www.modelscope.ai/models/OpenVDN/vdn-minimax-h3)] [[`License`](#license)]
 
-We release **VDN-Minimax-H3** (**VDN-H3**), a hybrid-attention model that
-generates video faster than it plays, powered by
-[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3). It offers these key
-features:
+We release **VDN-Minimax-H3** (**VDN-H3**), a hybrid-attention model that generates video faster than it plays, powered by [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3). It offers these key features:
 
-- **Fast inference:** With SGLang Diffusion on 8×B200 GPUs, VDN-H3 generates a
-  14.4-second clip in about **9.0 seconds end-to-end**, including **6.9 seconds
-  for denoising**, using 8 denoising steps.
-- **Hybrid Architecture:** We propose a hybrid-attention architecture: one frame-wise
-  linear attention branch that is highly efficient, and a softmax branch that maintains
-  the backbone's visual quality and consistency.
-- **Plug-and-Play:** The checkpoint adds a separate linear attention branch and two
-  small LoRA adapters that can be merged into the backbone during inference without
-  touching the backbone weights.
-- **Fully open-source:** We don't just open-source the weights. The optimized inference
-  stack and its corresponding training code are released together.
+- **Fast inference:** With SGLang Diffusion on 8×B200 GPUs, VDN-H3 generates a 14.4-second clip in about **9.0 seconds end-to-end**, including **6.9 seconds for denoising**, using 8 denoising steps.
+- **Hybrid Architecture:** We propose a hybrid-attention architecture: one frame-wise linear attention branch that is highly efficient, and a softmax branch that maintains the backbone's visual quality and consistency.
+- **Plug-and-Play:** The checkpoint adds a separate linear attention branch and two small LoRA adapters that can be merged into the backbone during inference without touching the backbone weights.
+- **Fully open-source:** We don't just open-source the weights. The optimized inference stack and its corresponding training code are released together.
 
 We present some samples of generated videos here:
 
@@ -36,21 +26,13 @@ We present some samples of generated videos here:
 
 ## News
 
-- **September 14, 2026:** [SGLang Diffusion](https://github.com/sgl-project/sglang)
-  now supports VDN-H3, achieving its fastest reported performance: 6.9 seconds
-  for denoising and about 9.0 seconds end-to-end for a 14.4-second video on
-  8×B200 GPUs. See the
-  [MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill)
-  for more details.
+- **September 14, 2026:** [SGLang Diffusion](https://github.com/sgl-project/sglang) now supports VDN-H3, achieving its fastest reported performance: 6.9 seconds for denoising and about 9.0 seconds end-to-end for a 14.4-second video on 8×B200 GPUs. See the [MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill) for more details.
 - **September 8, 2026:** We support I2VA, FL2VA and L2VA now with the same checkpoint.
-- **September 6, 2026:** We released the [VDN-H3 blog](https://openvdn.github.io/),
-  [training and inference code](https://github.com/OpenVDN/vdn-minimax-h3), and
-  [model weights](https://huggingface.co/OpenVDN/vdn-minimax-h3).
+- **September 6, 2026:** We released the [VDN-H3 blog](https://openvdn.github.io/), [training and inference code](https://github.com/OpenVDN/vdn-minimax-h3), and [model weights](https://huggingface.co/OpenVDN/vdn-minimax-h3).
 
 ## Set up the environment
 
-**Before you begin**, please read the [license](#license) before downloading or
-running VDN-H3.
+**Before you begin**, please read the [license](#license) before downloading or running VDN-H3.
 
 1. Clone the VDN-H3 repository from GitHub.
 
@@ -59,9 +41,7 @@ git clone https://github.com/OpenVDN/vdn-minimax-h3.git
 cd vdn-minimax-h3
 ```
 
-2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` =
-   `2.13.0+cu129`) and installing FlashAttention 4, since our code requires
-   [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/).
+2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` = `2.13.0+cu129`) and installing FlashAttention 4, since our code requires [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/).
 
 ```bash
 conda create -n vdn python=3.12 -y
@@ -71,9 +51,7 @@ pip install uv
 uv pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129
 ```
 
-3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included
-   (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl`
-   dependency).
+3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl` dependency).
 
 ```bash
 uv pip install --prerelease=allow -e .
@@ -89,8 +67,7 @@ bash scripts/setup_diffusers.sh
 
 ### Inference with Diffusers
 
-The quickest way to a first render is using diffusers, as we already release the
-checkpoints as modular diffusers components:
+The quickest way to a first render is using diffusers, as we already release the checkpoints as modular diffusers components:
 
 ```python
 import torch
@@ -121,26 +98,18 @@ python src/inference/infer_diffusers.py "a prompt" \
     --first prompts/image/first.png --last prompts/image/last.png
 ```
 
-On a 24 or 32 GB card, stream the transformer in one block at a time: swap
-`pipe.transformer.to("cuda")` for the line below, or add `--offload_dit` to the script.
-345 frames then peak at 20 GB.
+On a 24 or 32 GB card, stream the transformer in one block at a time: swap `pipe.transformer.to("cuda")` for the line below, or add `--offload_dit` to the script. 345 frames then peak at 20 GB.
 
 ```python
 apply_group_offloading(pipe.transformer, onload_device="cuda", offload_type="block_level",
                        num_blocks_per_group=1, use_stream=True)
 ```
 
-The transformer can be offloaded per model or per block, but not per leaf. Streaming it
-in fp8 (`--fp8`) also takes our
-[group-offloading patch](diffusers_patches/0002-Group-offloading-send-module-buffers-back-with-strea.patch),
-which `scripts/setup_diffusers.sh` applies; without it the fp8 weights pile up on the GPU
-until the card runs out of memory.
+The transformer can be offloaded per model or per block, but not per leaf. Streaming it in fp8 (`--fp8`) also takes our [group-offloading patch](diffusers_patches/0002-Group-offloading-send-module-buffers-back-with-strea.patch), which `scripts/setup_diffusers.sh` applies; without it the fp8 weights pile up on the GPU until the card runs out of memory.
 
 ### Inference with SGLang
 
-[SGLang Diffusion](https://github.com/sgl-project/sglang) provides native VDN-H3
-serving for T2VA and FL2VA. Install SGLang and launch the 8×B200 configuration
-below. Set `--num-gpus` to 1, 2, or 4 for the corresponding smaller configuration:
+[SGLang Diffusion](https://github.com/sgl-project/sglang) provides native VDN-H3 serving for T2VA and FL2VA. Install SGLang and launch the 8×B200 configuration below. Set `--num-gpus` to 1, 2, or 4 for the corresponding smaller configuration:
 
 ```bash
 uv pip install "sglang[diffusion]" --prerelease=allow
@@ -156,20 +125,13 @@ sglang serve \
   --port 30010
 ```
 
-With MXFP8, denoising takes 47.6, 25.9, 13.1, and 6.9 seconds on 1, 2, 4,
-and 8 B200 GPUs, respectively. The 8-GPU configuration returns the finished
-14.4-second video in about 9.0 seconds end-to-end after warm-up. See the
-[MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill)
-for more details.
+With MXFP8, denoising takes 47.6, 25.9, 13.1, and 6.9 seconds on 1, 2, 4, and 8 B200 GPUs, respectively. The 8-GPU configuration returns the finished 14.4-second video in about 9.0 seconds end-to-end after warm-up. See the [MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill) for more details.
 
 ### Inference with our repository
 
 #### Download the weights
 
-To render through this repository's own stack instead -- fp8, the tuned kernels, and
-Ulysses across eight GPUs, which is where the numbers in [Results](#results) come from
--- download everything (about 82 GB) from
-[Hugging Face](https://huggingface.co/OpenVDN/vdn-minimax-h3) into `ckpts/` using
+To render through this repository's own stack instead -- fp8, the tuned kernels, and Ulysses across eight GPUs, which is where the numbers in [Results](#results) come from -- download everything (about 82 GB) from [Hugging Face](https://huggingface.co/OpenVDN/vdn-minimax-h3) into `ckpts/` using
 
 ```bash
 hf download OpenVDN/vdn-minimax-h3 --local-dir ckpts
@@ -198,14 +160,11 @@ Then, run the following script:
 bash scripts/inference/8nfe_tuned_fp8.sh
 ```
 
-Note that the first run needs to compile all of the kernels, which might take several
-minutes. Later runs can reuse the cache.
+Note that the first run needs to compile all of the kernels, which might take several minutes. Later runs can reuse the cache.
 
 #### Use your own prompt
 
-We provide [three examples](prompts/README.md) and encode them using the
-Qwen3-VL-32B VLM. For your own prompt, you should first encode it using the VLM, then
-render it through the main diffusion model:
+We provide [three examples](prompts/README.md) and encode them using the Qwen3-VL-32B VLM. For your own prompt, you should first encode it using the VLM, then render it through the main diffusion model:
 
 ```bash
 python src/inference/encode_prompt.py --prompt "..." --out prompts/mine.pt
@@ -217,16 +176,11 @@ python src/inference/infer.py \
   render.out=results/mine.mp4
 ```
 
-We strongly recommend rewriting it first using
-[H3-Context-IR](https://platform.minimax.io/docs/api-reference/video-generation-v2-h3-context-ir)
-or the official
-[prompt-writing skills](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills)
-before encoding it. This can greatly improve the generated video quality.
+We strongly recommend rewriting it first using [H3-Context-IR](https://platform.minimax.io/docs/api-reference/video-generation-v2-h3-context-ir) or the official [prompt-writing skills](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills) before encoding it. This can greatly improve the generated video quality.
 
 #### Supporting FL2VA, I2VA, and L2VA
 
-The same checkpoints also generate from keyframes. We provide an FL2VA example in
-[prompts/image/](prompts/image/):
+The same checkpoints also generate from keyframes. We provide an FL2VA example in [prompts/image/](prompts/image/):
 
 <table>
 <tr>
@@ -260,9 +214,7 @@ python src/inference/encode_keyframes.py --prompt "..." \
   --first first.png --last last.png --out prompts/image/mine.pt
 ```
 
-`--first` alone is I2VA, `--last` alone is L2VA, both is FL2VA. Each mode wants its own
-instruction as the prompt's first line, given by MiniMax-H3's
-[prompt writing guide](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md).
+`--first` alone is I2VA, `--last` alone is L2VA, both is FL2VA. Each mode wants its own instruction as the prompt's first line, given by MiniMax-H3's [prompt writing guide](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md).
 
 The multi-GPU entrypoint takes the same prompt file:
 
@@ -276,9 +228,7 @@ torchrun --standalone --nproc_per_node=8 src/inference/infer_ulysses.py \
 
 #### Choosing an inference configuration
 
-We support both single-GPU and multi-GPU inference for the released model. Single-GPU
-scripts auto-detect the best kernels for your GPU. Multi-GPU scripts vary for
-different hardware (H200, B200) to achieve the best performance.
+We support both single-GPU and multi-GPU inference for the released model. Single-GPU scripts auto-detect the best kernels for your GPU. Multi-GPU scripts vary for different hardware (H200, B200) to achieve the best performance.
 
 ```bash
 bash scripts/inference/8nfe_tuned_fp8.sh                # one GPU
@@ -288,10 +238,7 @@ bash scripts/inference/8nfe_tuned_fp8_ulysses_b200.sh   # eight B200s, one node
 
 ## Results
 
-Our fastest reported result uses SGLang Diffusion on 8×B200 GPUs: 6.9 seconds for
-denoising and about 9.0 seconds end-to-end for a 768p, 14.4-second video. The
-tables below compare its steady-state denoising speed with our reference inference
-pipeline on H200s and B200s:
+Our fastest reported result uses SGLang Diffusion on 8×B200 GPUs: 6.9 seconds for denoising and about 9.0 seconds end-to-end for a 768p, 14.4-second video. The tables below compare its steady-state denoising speed with our reference inference pipeline on H200s and B200s:
 
 **H200:**
 
@@ -310,18 +257,11 @@ pipeline on H200s and B200s:
 | VDN-H3 FP8 Distributed | 8 | 1.40 | 1.2 min | 11.23 s |
 | SGLang Diffusion, VDN-H3 FP8 Distributed | 8 | **0.88** | **44.0 s** | **6.9 s** |
 
-We exclude model loading, warm-up, VAE decoding, and MP4 encoding. For a live setup,
-we recommend running the text prompt rewriter, VAE decoding, and MP4 conversion on
-separate machines, so the eight GPUs only denoise.
+We exclude model loading, warm-up, VAE decoding, and MP4 encoding. For a live setup, we recommend running the text prompt rewriter, VAE decoding, and MP4 conversion on separate machines, so the eight GPUs only denoise.
 
 ## Training Recipe
 
-VDN-H3 is trained in three stages based on the frozen dense model, each starting from
-the previous stage's final checkpoint. We additionally include a DMD training stage to
-align with the community
-[few-step distillation LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora).
-The training scripts are located in `src/training/` and `scripts/training/`, and all
-training configurations can be found under `configs/training/`.
+VDN-H3 is trained in three stages based on the frozen dense model, each starting from the previous stage's final checkpoint. We additionally include a DMD training stage to align with the community [few-step distillation LoRA](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora). The training scripts are located in `src/training/` and `scripts/training/`, and all training configurations can be found under `configs/training/`.
 
 | Stage | What it trains | Steps |
 |---|---|---:|
@@ -341,12 +281,9 @@ bash scripts/training/stage_dmd_vdn.sh  data.index_file=/path/to/video_index.jso
 
 ### Data Preprocess
 
-The trainers read pre-encoded video latents, audio latents, and text latents, following
-the H3 standard pipeline. Captions should be written in the same format inference
-expects.
+The trainers read pre-encoded video latents, audio latents, and text latents, following the H3 standard pipeline. Captions should be written in the same format inference expects.
 
-The preprocessed data should be placed as follows, with a `video_index.jsonl` carrying
-the metadata:
+The preprocessed data should be placed as follows, with a `video_index.jsonl` carrying the metadata:
 
 ```
 <root>/
@@ -363,17 +300,11 @@ the metadata:
     └── ...
 ```
 
-`data.index_file` names the jsonl. Only `latent_path` is read from a row; the audio and
-text sidecars are found by path arithmetic — same file name, sibling directory — so
-`latent_path` must end in `video/<name>.pt`. The reader is
-`src/training/dataset_h3_latents.py`.
+`data.index_file` names the jsonl. Only `latent_path` is read from a row; the audio and text sidecars are found by path arithmetic — same file name, sibling directory — so `latent_path` must end in `video/<name>.pt`. The reader is `src/training/dataset_h3_latents.py`.
 
 ### Stage-DMD
 
-Stage-DMD is data-free, only requiring the text rows. Its `turbo` LoRA adapter is
-initialized from
-[larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora),
-which the config expects in `ckpts/external/`:
+Stage-DMD is data-free, only requiring the text rows. Its `turbo` LoRA adapter is initialized from [larryvrh/MiniMax-H3-Turbo-Lora](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora), which the config expects in `ckpts/external/`:
 
 ```bash
 hf download larryvrh/MiniMax-H3-Turbo-Lora \
@@ -382,16 +313,7 @@ hf download larryvrh/MiniMax-H3-Turbo-Lora \
 
 ## Acknowledgement
 
-VDN-H3 is built on [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) and starts
-from its released transformer weights. We also thank
-[Diffusers](https://github.com/huggingface/diffusers),
-[FlashAttention](https://github.com/Dao-AILab/flash-attention), and
-[Triton](https://github.com/triton-lang/triton), on which the optimized inference path
-is built. We thank [Kernel Design Agents (KDA)](https://github.com/mit-han-lab/kernel-design-agents)
-for kernel design support. We also thank
-[Flash Linear Attention (FLA)](https://github.com/fla-org/flash-linear-attention) and
-[FlexAttention](https://pytorch.org/docs/stable/nn.attention.flex_attention.html) for
-their open-source attention implementations.
+VDN-H3 is built on [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) and starts from its released transformer weights. We also thank [Diffusers](https://github.com/huggingface/diffusers), [FlashAttention](https://github.com/Dao-AILab/flash-attention), and [Triton](https://github.com/triton-lang/triton), on which the optimized inference path is built. We thank [Kernel Design Agents (KDA)](https://github.com/mit-han-lab/kernel-design-agents) for kernel design support. We also thank [Flash Linear Attention (FLA)](https://github.com/fla-org/flash-linear-attention) and [FlexAttention](https://pytorch.org/docs/stable/nn.attention.flex_attention.html) for their open-source attention implementations.
 
 ## BibTeX
 
@@ -410,11 +332,6 @@ their open-source attention implementations.
 
 ## License
 
-This repository contains the VDN-H3 training and inference code, which is licensed
-under the [Apache License, Version 2.0](LICENSE). Copyright 2026 the VDN authors.
+This repository contains the VDN-H3 training and inference code, which is licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 the VDN authors.
 
-**The model weights are not in this repository and are not covered by that license.**
-VDN-H3 is a derivative of MiniMax H3, and its weights are distributed separately at
-[huggingface.co/OpenVDN/vdn-minimax-h3](https://huggingface.co/OpenVDN/vdn-minimax-h3)
-under the
-[MiniMax H3 Community License Agreement](licenses/MiniMax-H3-Community-License-Agreement.txt).
+**The model weights are not in this repository and are not covered by that license.** VDN-H3 is a derivative of MiniMax H3, and its weights are distributed separately at [huggingface.co/OpenVDN/vdn-minimax-h3](https://huggingface.co/OpenVDN/vdn-minimax-h3) under the [MiniMax H3 Community License Agreement](licenses/MiniMax-H3-Community-License-Agreement.txt).
