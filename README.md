@@ -47,6 +47,44 @@ We present some samples of generated videos here:
   [training and inference code](https://github.com/OpenVDN/vdn-minimax-h3), and
   [model weights](https://huggingface.co/OpenVDN/vdn-minimax-h3).
 
+## Set up the environment
+
+**Before you begin**, please read the [license](#license) before downloading or
+running VDN-H3.
+
+1. Clone the VDN-H3 repository from GitHub.
+
+```bash
+git clone https://github.com/OpenVDN/vdn-minimax-h3.git
+cd vdn-minimax-h3
+```
+
+2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` =
+   `2.13.0+cu129`) and installing FlashAttention 4, since our code requires
+   [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/).
+
+```bash
+conda create -n vdn python=3.12 -y
+conda activate vdn
+pip install uv
+
+uv pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129
+```
+
+3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included
+   (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl`
+   dependency).
+
+```bash
+uv pip install --prerelease=allow -e .
+```
+
+4. Install the patched Diffusers. The setup script handles everything:
+
+```bash
+bash scripts/setup_diffusers.sh
+```
+
 ## Quick Start — Generate your own video
 
 ### Inference with Diffusers
@@ -125,44 +163,6 @@ and 8 B200 GPUs, respectively. The 8-GPU configuration returns the finished
 for more details.
 
 ### Inference with our repository
-
-#### Set up the environment
-
-**Before you begin**, please read the [license](#license) before downloading or
-running VDN-H3.
-
-1. Clone the VDN-H3 repository from GitHub.
-
-```bash
-git clone https://github.com/OpenVDN/vdn-minimax-h3.git
-cd vdn-minimax-h3
-```
-
-2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` =
-   `2.13.0+cu129`) and installing FlashAttention 4, since our code requires
-   [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/).
-
-```bash
-conda create -n vdn python=3.12 -y
-conda activate vdn
-pip install uv
-
-uv pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129
-```
-
-3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included
-   (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl`
-   dependency).
-
-```bash
-uv pip install --prerelease=allow -e .
-```
-
-4. Install the patched Diffusers. The setup script handles everything:
-
-```bash
-bash scripts/setup_diffusers.sh
-```
 
 #### Download the weights
 
