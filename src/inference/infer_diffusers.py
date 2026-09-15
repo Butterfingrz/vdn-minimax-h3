@@ -13,7 +13,7 @@ the Hub, so the patched diffusers that scripts/setup_diffusers.sh installs is th
 setup; the only thing it reads from here is the default prompt, and a prompt of your own
 replaces that. It deliberately shares NO code with infer.py and infer_ulysses.py -- those
 are the fast stack (fp8, the decomposed window kernel, Ulysses); this is the portable
-one, single-GPU bf16.
+one, single-GPU, bf16 or torchao fp8.
 
 `workflow=` keeps the unused 61.7 GB transformer partition from being fetched. Every
 model but the transformer is offloaded, always: the 62 GB Qwen3-VL text encoder comes
@@ -79,8 +79,10 @@ def main():
     p.add_argument("--first", help="keyframe the video starts from")
     p.add_argument("--last", help="keyframe the video ends on")
     p.add_argument("--fp8", action="store_true",
-                   help="every wide Linear in fp8 e4m3, through torchao (pip install "
-                        "torchao): the transformer's weights drop from 62 GB to 45")
+                   help="the component's preset TorchAoConfig (pip install torchao): every "
+                        "wide Linear in fp8 e4m3, the transformer's weights drop from 62 GB "
+                        "to 45. A TorchAoConfig of your own goes through quantization_config= "
+                        "in load_components; any other backend raises")
     p.add_argument("--offload_dit", action="store_true",
                    help="stream the transformer onto the GPU one block at a time, which "
                         "a 24 GB card needs: 345 frames then peak at 22 GB, 20 in fp8. The "
