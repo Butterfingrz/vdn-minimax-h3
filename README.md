@@ -101,7 +101,8 @@ until the card runs out of memory.
 ### Inference with SGLang
 
 [SGLang Diffusion](https://github.com/sgl-project/sglang) provides native VDN-H3
-serving for T2VA and FL2VA. Install SGLang and launch the 8×B200 configuration with:
+serving for T2VA and FL2VA. Install SGLang and launch the 8×B200 configuration
+below. Set `--num-gpus` to 1, 2, or 4 for the corresponding smaller configuration:
 
 ```bash
 uv pip install "sglang[diffusion]" --prerelease=allow
@@ -109,6 +110,7 @@ uv pip install "sglang[diffusion]" --prerelease=allow
 sglang serve \
   --model-path OpenVDN/vdn-minimax-h3 \
   --num-gpus 8 \
+  --quantization fp8 \
   --attention-backend hybrid_window_attn_h3 \
   --performance-mode speed \
   --warmup-num-frames 345 \
@@ -116,8 +118,9 @@ sglang serve \
   --port 30010
 ```
 
-This configuration denoises a 14.4-second video in 6.9 seconds and returns the
-finished video in about 9.0 seconds after warm-up. See the
+With MXFP8, denoising takes 47.6, 25.9, 13.1, and 6.9 seconds on 1, 2, 4,
+and 8 B200 GPUs, respectively. The 8-GPU configuration returns the finished
+14.4-second video in about 9.0 seconds end-to-end after warm-up. See the
 [MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill)
 for more details.
 
