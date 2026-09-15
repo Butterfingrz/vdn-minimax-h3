@@ -7,8 +7,9 @@ generates video faster than it plays, powered by
 [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3). It offers these key
 features:
 
-- **Fast inference:** On 8 B200 GPUs, VDN-H3 generates a 14.4-second clip in
-  **11.23 seconds** using 8 denoising steps.
+- **Fast inference:** With SGLang Diffusion on 8×B200 GPUs, VDN-H3 generates a
+  14.4-second clip in about **9.0 seconds end-to-end**, including **6.9 seconds
+  for denoising**, using 8 denoising steps.
 - **Hybrid Architecture:** We propose a hybrid-attention architecture: one frame-wise
   linear attention branch that is highly efficient, and a softmax branch that maintains
   the backbone's visual quality and consistency.
@@ -46,47 +47,9 @@ We present some samples of generated videos here:
   [training and inference code](https://github.com/OpenVDN/vdn-minimax-h3), and
   [model weights](https://huggingface.co/OpenVDN/vdn-minimax-h3).
 
-## Set up environment
-
-**Before you begin**, please read the [license](#license) before downloading or
-running VDN-H3.
-
-1. Clone the VDN-H3 repository from GitHub.
-
-```bash
-git clone https://github.com/OpenVDN/vdn-minimax-h3.git
-cd vdn-minimax-h3
-```
-
-2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` =
-   `2.13.0+cu129`) and installing FlashAttention 4, since our code requires
-   [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/).
-
-```bash
-conda create -n vdn python=3.12 -y
-conda activate vdn
-pip install uv
-
-uv pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129
-```
-
-3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included
-   (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl`
-   dependency).
-
-```bash
-uv pip install --prerelease=allow -e .
-```
-
-4. Install the patched Diffusers. The setup script handles everything:
-
-```bash
-bash scripts/setup_diffusers.sh
-```
-
 ## Quick Start — Generate your own video
 
-### Load it with Diffusers
+### Inference with Diffusers
 
 The quickest way to a first render is using diffusers, as we already release the
 checkpoints as modular diffusers components:
@@ -135,7 +98,70 @@ in fp8 (`--fp8`) also takes our
 which `scripts/setup_diffusers.sh` applies; without it the fp8 weights pile up on the GPU
 until the card runs out of memory.
 
-### Download the weights
+### Inference with SGLang
+
+[SGLang Diffusion](https://github.com/sgl-project/sglang) provides native VDN-H3
+serving for T2VA and FL2VA. Install SGLang and launch the 8×B200 configuration with:
+
+```bash
+uv pip install "sglang[diffusion]" --prerelease=allow
+
+sglang serve \
+  --model-path OpenVDN/vdn-minimax-h3 \
+  --num-gpus 8 \
+  --attention-backend hybrid_window_attn_h3 \
+  --performance-mode speed \
+  --warmup-num-frames 345 \
+  --warmup-resolutions 1344x768 \
+  --port 30010
+```
+
+This configuration denoises a 14.4-second video in 6.9 seconds and returns the
+finished video in about 9.0 seconds after warm-up. See the
+[MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill)
+for more details.
+
+### Inference with our repository
+
+#### Set up the environment
+
+**Before you begin**, please read the [license](#license) before downloading or
+running VDN-H3.
+
+1. Clone the VDN-H3 repository from GitHub.
+
+```bash
+git clone https://github.com/OpenVDN/vdn-minimax-h3.git
+cd vdn-minimax-h3
+```
+
+2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` =
+   `2.13.0+cu129`) and installing FlashAttention 4, since our code requires
+   [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/).
+
+```bash
+conda create -n vdn python=3.12 -y
+conda activate vdn
+pip install uv
+
+uv pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129
+```
+
+3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included
+   (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl`
+   dependency).
+
+```bash
+uv pip install --prerelease=allow -e .
+```
+
+4. Install the patched Diffusers. The setup script handles everything:
+
+```bash
+bash scripts/setup_diffusers.sh
+```
+
+#### Download the weights
 
 To render through this repository's own stack instead -- fp8, the tuned kernels, and
 Ulysses across eight GPUs, which is where the numbers in [Results](#results) come from
@@ -161,7 +187,7 @@ ckpts/
   stage-dmd-step-250/  VDN-H3-8-step: the above + adapters/turbo/ · 5.1 GB
 ```
 
-### Render a video
+#### Render a video
 
 Then, run the following script:
 
@@ -172,7 +198,7 @@ bash scripts/inference/8nfe_tuned_fp8.sh
 Note that the first run needs to compile all of the kernels, which might take several
 minutes. Later runs can reuse the cache.
 
-### Use your own prompt
+#### Use your own prompt
 
 We provide [three examples](prompts/README.md) and encode them using the
 Qwen3-VL-32B VLM. For your own prompt, you should first encode it using the VLM, then
@@ -194,7 +220,7 @@ or the official
 [prompt-writing skills](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills)
 before encoding it. This can greatly improve the generated video quality.
 
-### Supporting FL2VA, I2VA, and L2VA
+#### Supporting FL2VA, I2VA, and L2VA
 
 The same checkpoints also generate from keyframes. We provide an FL2VA example in
 [prompts/image/](prompts/image/):
@@ -245,7 +271,7 @@ torchrun --standalone --nproc_per_node=8 src/inference/infer_ulysses.py \
   render.out=results/example_fl2va.mp4
 ```
 
-### Choosing an inference configuration
+#### Choosing an inference configuration
 
 We support both single-GPU and multi-GPU inference for the released model. Single-GPU
 scripts auto-detect the best kernels for your GPU. Multi-GPU scripts vary for
@@ -259,8 +285,10 @@ bash scripts/inference/8nfe_tuned_fp8_ulysses_b200.sh   # eight B200s, one node
 
 ## Results
 
-We report steady-state denoising speed on the 768p, 14.4-second video generation
-workload for the released model using our inference pipeline on H200s and B200s:
+Our fastest reported result uses SGLang Diffusion on 8×B200 GPUs: 6.9 seconds for
+denoising and about 9.0 seconds end-to-end for a 768p, 14.4-second video. The
+tables below compare its steady-state denoising speed with our reference inference
+pipeline on H200s and B200s:
 
 **H200:**
 
@@ -276,7 +304,8 @@ workload for the released model using our inference pipeline on H200s and B200s:
 |---|---:|---:|---:|---:|
 | dense MiniMax H3 (cuDNN) | 1 | 16.74 | 13.95 min | 2.23 min |
 | VDN-H3 FP8 | 1 | 6.41 | 5.3 min | 51 s |
-| VDN-H3 FP8 Distributed | 8 | 1.40 | 1.2 min | 11.23 s |
+| SGLang Diffusion, VDN-H3 MXFP8 | 8 | **0.88** | — | **6.9 s** |
+| OpenVDN reference, VDN-H3 FP8 Distributed | 8 | 1.40 | 1.2 min | 11.23 s |
 
 We exclude model loading, warm-up, VAE decoding, and MP4 encoding. For a live setup,
 we recommend running the text prompt rewriter, VAE decoding, and MP4 conversion on
