@@ -308,7 +308,7 @@ pipeline on H200s and B200s:
 | dense MiniMax H3 (cuDNN) | 1 | 16.74 | 13.95 min | 2.23 min |
 | VDN-H3 FP8 | 1 | 6.41 | 5.3 min | 51 s |
 | VDN-H3 FP8 Distributed | 8 | 1.40 | 1.2 min | 11.23 s |
-| SGLang Diffusion, VDN-H3 FP8 Distributed | 8 | **0.88** | — | **6.9 s** |
+| SGLang Diffusion, VDN-H3 FP8 Distributed | 8 | **0.88** | **44.0 s** | **6.9 s** |
 
 We exclude model loading, warm-up, VAE decoding, and MP4 encoding. For a live setup,
 we recommend running the text prompt rewriter, VAE decoding, and MP4 conversion on
