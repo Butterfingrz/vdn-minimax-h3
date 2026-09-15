@@ -13,6 +13,7 @@ dependencies = [
     "flash-attn-4==4.0.0b26",     # flash_attn.cute -- the FA4 CuTe kernels behind FlexAttention
     "transformers==5.15.0",
     "accelerate==1.14.0",
+    "torchao==0.18.0",            # fp8 on the diffusers path (infer_diffusers.py --fp8)
     "peft==0.20.0",
     "safetensors==0.8.0",
     "huggingface_hub>=1.27.0",

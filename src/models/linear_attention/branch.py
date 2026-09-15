@@ -431,6 +431,7 @@ class BidirectionalLinearBranch(nn.Module):
 
         A, B = frame_statistics(key_by_frame, value_by_frame, beta, a_fp32=self.a_fp32,
                                 inference=True)
+        del key, value, key_by_frame, value_by_frame     # 2.4 GiB, summarised into A and B
         if frame_mean is None:
             frame_mean = xv.view(num_frames, tokens_per_frame, -1).mean(
                 dim=1, dtype=torch.float32)

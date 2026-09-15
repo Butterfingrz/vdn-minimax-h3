@@ -339,7 +339,12 @@ def write_config(checkpoint_dir: str, out_dir: str, base_source: str, base_subfo
             "branch": "linear_branch/model.safetensors",
             "adapters": adapters,
             "inference_kernels": True,
-            "softmax_backend": "auto",
+            # flex, not the repository's `auto` (the decomposed FA4 varlen kernel): the
+            # component is loaded on cards this repository's configs never see. flex
+            # runs the same FA4 block-sparse kernel where flash-attn-4 is installed and
+            # torch's own Triton kernel where it is not, keeps no gathered copy of k/v,
+            # and is what a 24 GB card renders 345 frames on.
+            "softmax_backend": "flex",
             # Stated, and false: fp8 changes the sample, so it is never a default. A
             # caller opts in with `fp8=True`; this is what that overrides.
             "fp8": False,

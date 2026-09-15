@@ -19,25 +19,47 @@ Pointing at them instead of copying them is why the published layout holds no du
 weights. The paths are `config.json`'s `vdn` block, written relative to the checkpoint
 directory that contains `diffusers/`.
 
-`fp8=True` is the one thing here that is a choice rather than assembly, which is why it
-is a keyword and defaults off. Through a pipeline it is per-component:
+Quantisation is torchao's, and it runs LAST. The base always loads in bf16: the LoRA
+merge writes into `Linear.weight`, and a quantised weight cannot take that write.
+Diffusers' own loader quantises each weight as it loads, before anything here runs, so
+`quantization_config` is caught here rather than passed down, and only a `TorchAoConfig`
+is accepted -- torchao is the backend that quantises a built model.
+
+`fp8=True` is the recipe this repository renders with, in torchao's terms: every Linear
+at least 4096 wide on both sides in fp8 e4m3, activations per row and weights per output
+channel on sm90, both per tensor on sm100, fast accumulation. Through a pipeline it is
+per-component:
 
     pipe.load_components(trust_remote_code=True, torch_dtype=torch.bfloat16,
                          fp8={"transformer": True})
+
+A `quantization_config` of your own replaces that recipe; without a
+`modules_to_not_convert` of its own it leaves the same narrow Linears alone. Either way
+each quantised Linear then calls a torch.compile'd `F.linear`: torchao's eager path makes
+several passes over the activation, one of them an fp32 copy of it, and compiled it is
+one kernel. The weights are parameters, so diffusers' group offloading streams them as
+they are.
 """
 import json
 import os
 import posixpath
+import types
 
 import torch
+import torch.nn.functional as F
 from diffusers import MiniMaxH3Transformer3DModel
+from diffusers.quantizers import DiffusersAutoQuantizer
+from diffusers.quantizers.quantization_config import QuantizationMethod
 
 from src.inference.utils.lora import merge_lora_state
 from src.models.hybrid_transform import (apply_hybrid_attention_transform, iter_hybrids,
-                                         set_inference_mode, set_softmax_backend)
-from src.models.ops.fp8_linear import convert_linear_to_fp8
+                                         set_inference_mode, set_layout,
+                                         set_softmax_backend)
+from src.models.ops.fp8_linear import MIN_WIDTH, per_tensor_gemm
+from src.models.sequence_layout import layout_from_indices
 
 CONFIG_KEY = "vdn"
+_COMPILED_LINEAR = {}
 
 
 def _open(source, repo_path, **hub_kwargs):
@@ -70,15 +92,129 @@ def _load_branch(model, weights):
     return len(weights)
 
 
+def _wide(module):
+    return (isinstance(module, torch.nn.Linear) and module.in_features >= MIN_WIDTH
+            and module.out_features >= MIN_WIDTH)
+
+
+def _check_quantization(config):
+    """Before the 66 GB load: torchao is installed, and the config is one it applies."""
+    try:
+        import torchao  # noqa: F401
+    except ImportError as e:
+        raise ImportError("fp8 and quantization_config on this component go through "
+                          "torchao: pip install torchao") from e
+    if config is not None and getattr(config, "quant_method", None) != QuantizationMethod.TORCHAO:
+        raise ValueError(f"{type(config).__name__} quantises while the weights load, before "
+                         "the LoRA merge this component performs; pass a TorchAoConfig, "
+                         "which is applied after it")
+
+
+def _fp8_config():
+    """`fp8=True` in torchao's terms. The scale granularity follows the card, as it does
+    for Fp8Linear; fp8_linear's header says why sm100 is per tensor."""
+    from diffusers import TorchAoConfig
+    from torchao.float8.inference import Float8MMConfig
+    from torchao.quantization import (Float8DynamicActivationFloat8WeightConfig, PerRow,
+                                      PerTensor)
+
+    return TorchAoConfig(Float8DynamicActivationFloat8WeightConfig(
+        granularity=PerTensor() if per_tensor_gemm() else PerRow(),
+        mm_config=Float8MMConfig(use_fast_accum=True), set_inductor_config=False))
+
+
+def _linear(x, weight, bias):
+    return F.linear(x, weight, bias)
+
+
+def _compile_linears(model):
+    """One compiled `F.linear` shared by every quantised Linear, shapes dynamic: the
+    token streams and weight shapes would otherwise each be a recompile."""
+    from torchao.utils import TorchAOBaseTensor
+
+    if "fn" not in _COMPILED_LINEAR:
+        config = torch._dynamo.config
+        for name in ("recompile_limit", "cache_size_limit"):
+            if hasattr(config, name):
+                setattr(config, name, max(getattr(config, name), 64))
+        _COMPILED_LINEAR["fn"] = torch.compile(_linear, dynamic=True)
+    compiled = _COMPILED_LINEAR["fn"]
+
+    def forward(self, x):
+        return compiled(x, self.weight, self.bias)
+
+    count = 0
+    for module in model.modules():
+        if isinstance(module, torch.nn.Linear) and isinstance(module.weight, TorchAOBaseTensor):
+            module.forward = types.MethodType(forward, module)
+            count += 1
+    return count
+
+
+def _quantize(model, config):
+    """torchao over the built, merged model. Diffusers' loader would skip
+    `modules_to_not_convert` and `_keep_in_fp32_modules`; so does this, and a config
+    that names no modules gets the narrow Linears, the ones `fp8=True` leaves in bf16."""
+    from torchao.quantization import quantize_
+
+    skip = config.modules_to_not_convert
+    if skip is None:
+        skip = [name for name, module in model.named_modules()
+                if isinstance(module, torch.nn.Linear) and not _wide(module)]
+    skip = list(skip) + list(model._keep_in_fp32_modules or [])
+
+    def convert(module, name):
+        return (isinstance(module, torch.nn.Linear)
+                and not any(name == key or f"{key}." in f"{name}." for key in skip))
+
+    quantize_(model, config.get_apply_tensor_subclass(), filter_fn=convert)
+    _compile_linears(model)
+    model.is_quantized = True
+    model.quantization_method = QuantizationMethod.TORCHAO
+    model.hf_quantizer = DiffusersAutoQuantizer.from_config(config)
+
+
+def _layout(position_ids, video_indices, text_indices):
+    """The packed sequence's shape for the hybrid layers, from the row indices the pipeline
+    hands the transformer. The target video rows are the trailing contiguous run of
+    `video_indices` -- keyframe conditioning rows, when there are any, come before the
+    audio rows -- and their (h, w) rotary coordinates are the frame grid. `render.py`
+    derives the same layout from `build_packed_sequence`'s own counts."""
+    breaks = (video_indices[1:] != video_indices[:-1] + 1).nonzero()
+    target = video_indices[int(breaks[-1]) + 1:] if breaks.numel() else video_indices
+    grid = position_ids[target, 1:]
+    frame_h, frame_w = torch.unique(grid[:, 0]).numel(), torch.unique(grid[:, 1]).numel()
+    tokens_per_frame = frame_h * frame_w
+    return layout_from_indices(target, target.numel() // tokens_per_frame, tokens_per_frame,
+                               seq_len=position_ids.shape[0], frame_size=(frame_h, frame_w),
+                               text_indices=text_indices)
+
+
 class VDNMiniMaxH3Transformer3DModel(MiniMaxH3Transformer3DModel):
     """MiniMax-H3 with the VDN hybrid attention transform applied and the checkpoint's
-    LoRA adapters folded in. Same forward, same config and the same outputs as the base
-    class, so every MiniMax-H3 pipeline block accepts it unchanged."""
+    LoRA adapters folded in. Same forward signature, same config and the same outputs as
+    the base class, so every MiniMax-H3 pipeline block accepts it unchanged. The one
+    thing forward adds is the packed layout: without one a hybrid layer runs full
+    attention and skips its linear branch."""
+
+    def forward(self, hidden_states, audio_hidden_states, encoder_hidden_states, timestep,
+                timestep_indices, token_tags, position_ids, video_indices, audio_indices,
+                text_indices, attention_kwargs=None, return_dict=True):
+        # Spelled out rather than *args: the denoise block hands over only the layout
+        # tensors that forward names.
+        set_layout(self, _layout(position_ids, video_indices, text_indices))
+        return super().forward(hidden_states, audio_hidden_states, encoder_hidden_states,
+                               timestep, timestep_indices, token_tags, position_ids,
+                               video_indices, audio_indices, text_indices,
+                               attention_kwargs=attention_kwargs, return_dict=return_dict)
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *, subfolder=None,
                         cache_dir=None, revision=None, token=None,
-                        local_files_only=None, fp8=None, **kwargs):
+                        local_files_only=None, fp8=None, quantization_config=None,
+                        softmax_backend=None, **kwargs):
+        # softmax_backend: the window-softmax kernel, "flex" (the checkpoint's default) or
+        # "decomposed" (FA4 varlen; faster on B200, needs flash-attn-4).
         from safetensors.torch import load_file
 
         source = pretrained_model_name_or_path
@@ -87,6 +223,14 @@ class VDNMiniMaxH3Transformer3DModel(MiniMaxH3Transformer3DModel):
 
         with open(_open(source, posixpath.join(subfolder or ".", "config.json"), **hub)) as f:
             spec = json.load(f)[CONFIG_KEY]
+
+        if fp8 is None:
+            fp8 = spec.get("fp8", False)
+        if fp8 and quantization_config is not None:
+            raise ValueError("fp8=True is a quantization_config of its own; pass one or "
+                             "the other")
+        if fp8 or quantization_config is not None:
+            _check_quantization(quantization_config)
 
         # The base checkpoint is mixed precision and carries no `torch_dtype`, so a load
         # that names no dtype keeps every stored dtype -- a different model from the one
@@ -117,14 +261,9 @@ class VDNMiniMaxH3Transformer3DModel(MiniMaxH3Transformer3DModel):
         # wrong, so a caller that means to build a graph can set inference_kernels false.
         if spec.get("inference_kernels", True):
             set_inference_mode(model, True)
-            set_softmax_backend(model, spec.get("softmax_backend", "auto"))
+            set_softmax_backend(model, softmax_backend or spec.get("softmax_backend", "flex"))
 
-        # Last, as in `assemble.build_inference_model`, and off unless asked: fp8 halves
-        # the wide Linears -- 62 GB of weights become 43 -- and roughly doubles their
-        # GEMMs. `skip_end_blocks=0` is what every tuned config in the code repository
-        # renders with. The swap is one way.
-        if fp8 is None:
-            fp8 = spec.get("fp8", False)
-        if fp8:
-            convert_linear_to_fp8(model, skip_end_blocks=0)
+        # Last, after the merge (see the header), and off unless asked.
+        if fp8 or quantization_config is not None:
+            _quantize(model, _fp8_config() if fp8 else quantization_config)
         return model

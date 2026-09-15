@@ -19,6 +19,7 @@ from diffusers.models.transformers.transformer_minimax_h3 import _apply_rotary_e
 from src.models.attention_gates import OutputGate
 from src.models.sequence_layout import SequenceLayout
 from src.models.linear_attention import BidirectionalLinearBranch
+from src.models.softmax_attention.flex_attention import collect_after_first_flash
 from src.models.softmax_attention import (apply_softmax_gate, build_window_block_mask,
                                           window_bounds, window_softmax_flex,
                                           window_softmax_reference)
@@ -182,6 +183,12 @@ class HybridAttention(nn.Module):
             lo <= 0 and hi >= layout.num_frames - 1 for lo, hi in bounds)
         scale = self.head_dim ** -0.5
 
+        if not full_cover and self._window_kernel(hybrid_inference, x.is_cuda) == "flex":
+            # Built (once; cached) BEFORE the projections exist: torch's create_block_mask
+            # materialises ~10 GiB at 89k rows, and here the layer's live set is x alone
+            # rather than x plus 7 GiB of raw and roped q/k/v.
+            build_window_block_mask(layout, bounds, x.device, anchor_frames=self.anchor_frames)
+
         query, key, value, qkv_raw = self._qkv(x, rotary_emb)
         if full_cover:
             # A window wide enough to cover every frame IS the original attention, so go
@@ -200,6 +207,8 @@ class HybridAttention(nn.Module):
             softmax_out = self._window_softmax(query, key, value, layout, bounds, scale,
                                                hybrid_inference)
             linear_active = True
+            if self._window_kernel(hybrid_inference, x.is_cuda) == "flex":
+                collect_after_first_flash()      # see flex_attention: a one-time gc
 
         # The roped q/k (and the flex output) are dead once the local branch is done;
         # drop them before the linear branch runs — at H3 scale they are ~3 GiB that would

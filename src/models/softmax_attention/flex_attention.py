@@ -5,6 +5,7 @@ process, one geometry (see infer entrypoint).
 """
 import collections
 import functools
+import gc
 import os
 import warnings
 
@@ -202,6 +203,21 @@ def _warn_inference_flex():
         warnings.warn(
             "sm100 INFERENCE is on the flex/BlockMask window softmax: "
             + "; ".join(msgs), RuntimeWarning, stacklevel=3)
+
+
+def collect_after_first_flash():
+    """One gc.collect() after the FIRST FLASH window call has RETURNED to HybridAttention,
+    once per process. The call that compiles the FLASH variant leaves its q, k and v in a
+    reference cycle of torch.fx nodes from the trace: after the caller drops them they
+    stay allocated until the cyclic collector happens to run, which at H3 scale is 4.2 GiB
+    (three [T, H, d] bf16 tensors at 345 frames) on the peak of every later layer --
+    23.1 GB instead of 18.9 per transformer call, streamed. Collected from the caller,
+    not inside window_softmax_flex: a collection inside that frame, right after the
+    compiled call, does not free it (measured); one after the frame has returned does."""
+    if _FLEX_CACHE.get("infer") is None or _FLEX_CACHE.get("collected"):
+        return
+    gc.collect()
+    _FLEX_CACHE["collected"] = True
 
 
 def window_softmax_flex(query, key, value, block_mask, scale, head_chunk=None,

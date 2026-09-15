@@ -98,14 +98,16 @@ python src/inference/infer_diffusers.py "a prompt" \
     --first prompts/image/first.png --last prompts/image/last.png
 ```
 
-On a 24 or 32 GB card, stream the transformer in one block at a time: swap `pipe.transformer.to("cuda")` for the line below, or add `--offload_dit` to the script. 345 frames then peak at 20 GB.
+On a 24 GB card, stream the transformer in one block at a time: swap `pipe.transformer.to("cuda")` for the line below, or add `--offload_dit` to the script. 345 frames then peak at 22 GB, 20 in fp8.
 
 ```python
 apply_group_offloading(pipe.transformer, onload_device="cuda", offload_type="block_level",
                        num_blocks_per_group=1, use_stream=True)
 ```
 
-The transformer can be offloaded per model or per block, but not per leaf. Streaming it in fp8 (`--fp8`) also takes our [group-offloading patch](diffusers_patches/0002-Group-offloading-send-module-buffers-back-with-strea.patch), which `scripts/setup_diffusers.sh` applies; without it the fp8 weights pile up on the GPU until the card runs out of memory.
+The transformer can be offloaded per model or per block, but not per leaf. Its window softmax runs on FlexAttention; `softmax_backend={"transformer": "decomposed"}` in `load_components` selects the FA4 varlen kernel the scripts above use instead.
+
+fp8 is torchao's (`pip install torchao`): `fp8={"transformer": True}` in `load_components`, or `--fp8` for the script, puts every wide Linear in fp8 e4m3, and a `quantization_config` of your own, a `TorchAoConfig`, is applied in its place after the LoRA merge.
 
 ### Inference with SGLang
 

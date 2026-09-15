@@ -6,7 +6,7 @@
         --transformer stage-b-step-2000/diffusers
     python src/inference/infer_diffusers.py "a prompt" \
         --first prompts/image/first.png --last prompts/image/last.png
-    python src/inference/infer_diffusers.py --offload_dit          # a 24 or 32 GB card
+    python src/inference/infer_diffusers.py --offload_dit          # a 24 GB card
 
 This runs the README's `Load it with Diffusers` snippet. Everything it renders comes from
 the Hub, so the patched diffusers that scripts/setup_diffusers.sh installs is the whole
@@ -55,8 +55,6 @@ def offload(pipe, device, dit=False):
     if not dit:
         pipe.transformer.to(device)
         return
-    # fp8 keeps its weights in buffers; diffusers_patches/0002 is what sends a streamed
-    # group's buffers back to the CPU along with its parameters.
     apply_group_offloading(pipe.transformer, onload_device=device, offload_device="cpu",
                            offload_type="block_level", num_blocks_per_group=1,
                            use_stream=True)
@@ -81,11 +79,11 @@ def main():
     p.add_argument("--first", help="keyframe the video starts from")
     p.add_argument("--last", help="keyframe the video ends on")
     p.add_argument("--fp8", action="store_true",
-                   help="every wide Linear in fp8 e4m3: the weights drop from 62 GB "
-                        "to 43 and the GEMMs roughly double")
+                   help="every wide Linear in fp8 e4m3, through torchao (pip install "
+                        "torchao): the transformer's weights drop from 62 GB to 45")
     p.add_argument("--offload_dit", action="store_true",
                    help="stream the transformer onto the GPU one block at a time, which "
-                        "a 24 or 32 GB card needs: 345 frames then peak at 20 GB. The "
+                        "a 24 GB card needs: 345 frames then peak at 22 GB, 20 in fp8. The "
                         "transformer offloads whole or by block, never by leaf")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda")

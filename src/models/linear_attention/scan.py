@@ -43,6 +43,11 @@ def frame_statistics(kf, vf, beta, a_fp32=True, inference=False):
 
 
 _STATS_PREP_CACHE = {}
+# INFERENCE: frames per pass of `_frame_statistics`. The prologue writes four operands
+# per frame -- k contiguous, k in fp32, beta*k in fp32, beta*v -- 8 GiB for a 345-frame
+# clip all at once, and it is the linear branch's peak. 16 frames at a time is 1.3 GiB,
+# and the batched GEMMs stay at 900 matrices per call.
+STATS_CHUNK_FRAMES = 16
 
 
 @contextlib.contextmanager
@@ -114,6 +119,25 @@ def _frame_stats_prep(kf, vf, beta, inference=False):
 
 
 def _frame_statistics(kf, vf, beta, a_fp32, inference=False):
+    """Inference takes the frames STATS_CHUNK_FRAMES at a time into preallocated A and B,
+    so the four prologue operands exist for one chunk rather than the whole clip: same
+    per-frame GEMMs (each frame is its own batch entry either way), only the batch
+    count cuBLAS sees changes. Training keeps the single pass: chunking would add a
+    graph node per chunk for no memory the backward could use."""
+    num_frames = kf.shape[0]
+    if not inference or num_frames <= STATS_CHUNK_FRAMES:
+        return _frame_statistics_pass(kf, vf, beta, a_fp32, inference=inference)
+    heads, dk, dv = kf.shape[1], kf.shape[-1], vf.shape[-1]
+    A = kf.new_empty((num_frames, heads, dk, dk), dtype=torch.float32)
+    B = kf.new_empty((num_frames, heads, dv, dk), dtype=torch.float32)
+    for start in range(0, num_frames, STATS_CHUNK_FRAMES):
+        stop = min(start + STATS_CHUNK_FRAMES, num_frames)
+        A[start:stop], B[start:stop] = _frame_statistics_pass(
+            kf[start:stop], vf[start:stop], beta[start:stop], a_fp32, inference=True)
+    return A, B
+
+
+def _frame_statistics_pass(kf, vf, beta, a_fp32, inference=False):
     kf, kf32, scaled32, vb = _frame_stats_prep(kf, vf, beta, inference=inference)
     if a_fp32:
         # A IN FP32, B LEFT IN BF16. A is the one the scan inverts, and bf16 breaks a
