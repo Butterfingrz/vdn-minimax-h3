@@ -39,7 +39,15 @@ each quantised Linear then calls a torch.compile'd `F.linear`: torchao's eager p
 several passes over the activation, one of them an fp32 copy of it, and compiled it is
 one kernel. The weights are parameters, so diffusers' group offloading streams them as
 they are.
+
+The activation amax is floored (`ACTIVATION_AMAX_FLOOR`), for the preset and for a
+Float8 dynamic-activation config of your own that sets no `activation_value_lb`. Rows of
+exact zeros reach `to_out_linear`: the linear branch skips the anchor frames, so their
+readout is zero, and torchao's per-row scale for a zero row is 0, which quantises the row
+to NaN and, through attention, the whole output. Fp8Linear's kernels floor the scale at
+1e-12; this is the same floor in torchao's terms, amax = scale * 448.
 """
+import dataclasses
 import json
 import os
 import posixpath
@@ -120,7 +128,21 @@ def _fp8_config():
 
     return TorchAoConfig(Float8DynamicActivationFloat8WeightConfig(
         granularity=PerTensor() if per_tensor_gemm() else PerRow(),
-        mm_config=Float8MMConfig(use_fast_accum=True), set_inductor_config=False))
+        mm_config=Float8MMConfig(use_fast_accum=True), set_inductor_config=False,
+        activation_value_lb=ACTIVATION_AMAX_FLOOR))
+
+
+ACTIVATION_AMAX_FLOOR = 448.0 * 1e-12   # fp8 e4m3 max times Fp8Linear's scale floor
+
+
+def _floored(quant):
+    """The user's Float8 dynamic-activation config with the amax floor, if it sets none."""
+    from torchao.quantization import Float8DynamicActivationFloat8WeightConfig
+
+    if (isinstance(quant, Float8DynamicActivationFloat8WeightConfig)
+            and quant.activation_value_lb is None):
+        return dataclasses.replace(quant, activation_value_lb=ACTIVATION_AMAX_FLOOR)
+    return quant
 
 
 def _linear(x, weight, bias):
@@ -167,7 +189,7 @@ def _quantize(model, config):
         return (isinstance(module, torch.nn.Linear)
                 and not any(name == key or f"{key}." in f"{name}." for key in skip))
 
-    quantize_(model, config.get_apply_tensor_subclass(), filter_fn=convert)
+    quantize_(model, _floored(config.get_apply_tensor_subclass()), filter_fn=convert)
     _compile_linears(model)
     model.is_quantized = True
     model.quantization_method = QuantizationMethod.TORCHAO
