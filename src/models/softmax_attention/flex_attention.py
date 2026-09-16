@@ -1,6 +1,5 @@
 """flex_attention with the FLASH/CuteDSL backend, the BlockMask builder and
-its caches, and the process-global downgrade latch. The latch (_FLEX_CACHE["infer_disabled"])
-is PERMANENT for the process by design -- which is exactly why mask geometry is one
+its caches. The FLASH variant is a static compile, which is why mask geometry is one
 process, one geometry (see infer entrypoint).
 """
 import collections
@@ -64,8 +63,7 @@ def _flex_attention_fn(inference=False):
     there is no template to inline into.
 
     The static variant keeps the recompile limit that guards the dynamic one, so a
-    process that does see 9 distinct lengths raises rather than degrading. Callers
-    downgrade on that (see window_softmax_flex).
+    process that does see 9 distinct lengths raises rather than degrading.
     """
     key = "infer" if inference else "train"
     if key not in _FLEX_CACHE:
@@ -159,6 +157,22 @@ def build_window_block_mask(layout: SequenceLayout, bounds, device, block_size=N
     return mask
 
 
+def flash_backend_available(device):
+    """Whether the FLASH (FA4 CuTe) flex backend is the right kernel on this card,
+    decided once per process by the card alone. FA4 implements block sparsity on sm90
+    and sm100 only: its sm8x kernel accepts the block tensors and never reads them, so
+    every query would visit every KV block -- correct output at DENSE cost, and no error
+    to catch; sm120 asserts. Those cards run the Triton kernel, whose BlockMask skipping
+    is generic. On the cards that have it flash-attn-4 is required: its absence raises
+    from the first FLASH call."""
+    if "flash_available" not in _FLEX_CACHE:
+        resolved = torch.device(device)
+        _FLEX_CACHE["flash_available"] = (
+            resolved.type == "cuda"
+            and torch.cuda.get_device_capability(resolved)[0] in (9, 10, 11))
+    return _FLEX_CACHE["flash_available"]
+
+
 _FLEX_INFER_WARNED = False
 
 
@@ -173,10 +187,7 @@ def _warn_inference_flex():
     if _FLEX_INFER_WARNED:
         return
     _FLEX_INFER_WARNED = True
-    try:
-        if not torch.cuda.is_available() or torch.cuda.get_device_capability(0)[0] < 10:
-            return
-    except Exception:
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability(0)[0] < 10:
         return
     msgs = ["kernels.softmax_backend is flex here; auto picks the decomposition, which "
             "runs this window faster than even CLC-scheduled flex"]
@@ -184,17 +195,13 @@ def _warn_inference_flex():
         msgs.append("FA_CLC=1 is not set -- flex is running the STATIC block-sparse "
                     "schedule, which is noticeably slower on sm100")
     else:
-        patched = True
-        try:
-            import flash_attn.cute.interface as _fa_iface
-            with open(_fa_iface.__file__) as fh:
-                src_text = fh.read()
-            i = src_text.find("is_dense_noncausal =")
-            # the patched assignment spans two physical lines, so search a window
-            # after the assignment rather than line-by-line
-            patched = i < 0 or "use_block_sparsity" in src_text[i:i + 220]
-        except Exception:
-            pass  # cannot inspect the install: better silent than crying wolf
+        import flash_attn.cute.interface as _fa_iface
+        with open(_fa_iface.__file__) as fh:
+            src_text = fh.read()
+        i = src_text.find("is_dense_noncausal =")
+        # the patched assignment spans two physical lines, so search a window
+        # after the assignment rather than line-by-line
+        patched = i < 0 or "use_block_sparsity" in src_text[i:i + 220]
         if not patched:
             msgs.append("FA_CLC=1 is set but the installed flash-attn STRIPS CLC for "
                         "block-sparse calls -- patch flash_attn/cute/interface.py so "
@@ -240,14 +247,10 @@ def window_softmax_flex(query, key, value, block_mask, scale, head_chunk=None,
     `head_chunk` overrides it for the one case the bound cannot see — running out of
     memory on a smaller card.
 
-    `inference` selects the FLASH/static variant (see _flex_attention_fn) and DOWNGRADES
-    permanently if it does not take. Downgrading rather than raising, because everything
-    that can go wrong here is a property of the machine or the workload rather than of
-    this call — no flash_attn.cute installed, a 9th distinct sequence length, a card
-    whose CuteDSL template does not build — and the fallback is the Triton kernel,
-    differing by a few 1e-3 relative (bf16 reduction order). A render that is ~1.6x
-    slower on that leg beats a render that died. It says so once, loudly, because the
-    only bad outcome here is nobody noticing that the fast path was never taken.
+    `inference` selects the FLASH/static variant (see _flex_attention_fn) on the cards
+    that have it (`flash_backend_available`), the Triton kernel elsewhere. Nothing is
+    caught: a missing flash-attn-4, a 9th distinct sequence length or a template that
+    does not build raise, naming the cause.
     """
     if inference:
         _warn_inference_flex()
@@ -255,27 +258,14 @@ def window_softmax_flex(query, key, value, block_mask, scale, head_chunk=None,
     if head_chunk is None:
         budget = (2 ** 31 - 1) // (value.shape[0] * value.shape[2])
         head_chunk = max(1, min(num_heads, budget))
-    use_flash = inference and not _FLEX_CACHE.get("infer_disabled")
-    flex = _flex_attention_fn(inference=use_flash)
+    flex = _flex_attention_fn(inference=inference and flash_backend_available(query.device))
 
     outputs = []
     for first_head in range(0, num_heads, head_chunk):
         heads = slice(first_head, min(first_head + head_chunk, num_heads))
         q_g, k_g, v_g = (t[:, heads].unsqueeze(0).transpose(1, 2)      # [1, Hc, T, d] view
                          for t in (query, key, value))
-        try:
-            out_g = flex(q_g, k_g, v_g, block_mask=block_mask, scale=scale)
-        except Exception as exc:
-            if not use_flash:
-                raise
-            _FLEX_CACHE["infer_disabled"] = True
-            print("hybrid_attention: the FLASH/static window kernel did not take on this "
-                  f"machine; falling back to Triton for the rest of the process (~1.6x "
-                  f"slower on the window). Reason: {type(exc).__name__}: "
-                  f"{str(exc).strip().splitlines()[0][:160]}", flush=True)
-            use_flash = False
-            flex = _flex_attention_fn(inference=False)
-            out_g = flex(q_g, k_g, v_g, block_mask=block_mask, scale=scale)
+        out_g = flex(q_g, k_g, v_g, block_mask=block_mask, scale=scale)
         outputs.append(out_g.squeeze(0).transpose(0, 1))                 # [T, Hc, d]
 
     # the common case is one group, and then this is a view, not a copy

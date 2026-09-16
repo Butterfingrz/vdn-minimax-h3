@@ -65,8 +65,8 @@ def apply_ablation(model, overrides):
 
 
 def flex_latch_state():
-    return {"infer_disabled": bool(_FLEX_CACHE.get("infer_disabled")),
-            "compiled_variants": sorted(k for k in _FLEX_CACHE if k != "infer_disabled")}
+    return {"compiled_variants": [k for k in ("infer", "train") if k in _FLEX_CACHE],
+            "flash_available": _FLEX_CACHE.get("flash_available")}
 
 
 def build_inference_model(cfg, device, *, load_decoders: bool = True,

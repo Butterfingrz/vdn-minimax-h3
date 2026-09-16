@@ -20,6 +20,12 @@ Inference-only (config kernels.softmax_backend = decomposed, and what auto resol
 every CUDA device; hybrid_transform.set_softmax_backend writes the choice onto every
 hybrid layer): training keeps the flex path. No fallback: a failure here raises rather
 than silently downgrading to a slower kernel.
+
+The window leg's varlen kernel is chosen once per process by the card (`varlen_kernel`):
+FA4's CuTe kernel on sm90 and up, where FA4 has kernels written for the card; torch's own
+`varlen_attn` (its flash kernels, the FA2 lineage, sm80 and up) on sm8x. Nothing is
+caught: a missing kernel raises with the install to fix. The dense leg is torch SDPA:
+cuDNN on sm90 and up, where it beats FA4 at this shape, SDPA's own choice elsewhere.
 """
 
 
@@ -30,15 +36,55 @@ from torch.nn.functional import scaled_dot_product_attention
 from src.models.sequence_layout import SequenceLayout
 
 _PLAN_CACHE = {}
+_KERNEL_CACHE = {}
 MAX_CACHED_PLANS = 4
 SOFTMAX_BACKENDS = ("auto", "flex", "decomposed", "ref")
 
 
-def fa4_varlen():
-    """The FA4 CuTe varlen kernel the window leg runs on, or an ImportError naming the
-    install that lacks it. Checked once at resolve time, not per forward."""
+def _capability_major():
+    return torch.cuda.get_device_capability(0)[0] if torch.cuda.is_available() else 0
+
+
+def _fa4_varlen():
     from flash_attn.cute.interface import flash_attn_varlen_func
-    return flash_attn_varlen_func
+
+    def fa4(q, k, v, cu_q, cu_k, max_q, max_k, scale):
+        out = flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu_q, cu_seqlens_k=cu_k,
+                                     max_seqlen_q=max_q, max_seqlen_k=max_k,
+                                     softmax_scale=scale)
+        return out[0] if isinstance(out, tuple) else out
+
+    fa4.name = "fa4"
+    return fa4
+
+
+def _torch_varlen():
+    from torch.nn.attention.varlen import varlen_attn
+
+    def torch_varlen(q, k, v, cu_q, cu_k, max_q, max_k, scale):
+        return varlen_attn(q, k, v, cu_q, cu_k, max_q, max_k, scale=scale)
+
+    torch_varlen.name = "torch"
+    return torch_varlen
+
+
+def varlen_kernel():
+    """The varlen kernel the window leg runs on, resolved once per process: FA4's on
+    sm90 and up, torch's own on sm8x (see the header). An ImportError here is the
+    install to fix: flash-attn-4 on sm90 and up, torch >= 2.13 on sm8x."""
+    if "varlen" not in _KERNEL_CACHE:
+        _KERNEL_CACHE["varlen"] = (_fa4_varlen() if _capability_major() >= 9
+                                   else _torch_varlen())
+    return _KERNEL_CACHE["varlen"]
+
+
+def _dense_backends():
+    """cuDNN SDPA on sm90 and up, where it is faster than FA4 at the dense leg's shape;
+    elsewhere SDPA picks among its own kernels."""
+    if _capability_major() >= 9:
+        return [SDPBackend.CUDNN_ATTENTION]
+    return [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION,
+            SDPBackend.CUDNN_ATTENTION]      # no MATH: it materialises the full score matrix
 
 
 def resolve_softmax_backend(backend: str) -> str:
@@ -47,21 +93,18 @@ def resolve_softmax_backend(backend: str) -> str:
     matches flex at the production width and is the same distance from the fp32
     reference (bf16 reduction order). So inference runs ONE window kernel on both
     architectures, the exact window with no mask machinery; flex stays what training
-    uses. ``flex`` / ``decomposed`` force either kernel; ``ref`` is the eager reference
-    for parity/debug."""
+    uses. A CUDA device with no varlen kernel raises here, naming the install.
+    ``flex`` / ``decomposed`` force either kernel; ``ref`` is the eager reference for
+    parity/debug."""
     if backend not in SOFTMAX_BACKENDS:
         raise ValueError(f"kernels.softmax_backend={backend!r}; expected one of "
                          f"{SOFTMAX_BACKENDS}")
     if backend == "auto":
         if not torch.cuda.is_available():
             return "flex"
-        try:
-            fa4_varlen()
-        except ImportError:
-            return "flex"
-        return "decomposed"
+        backend = "decomposed"
     if backend == "decomposed":
-        fa4_varlen()                      # raise now, with the install named, not mid-render
+        varlen_kernel()                   # raise now, with the install named, not mid-render
     return backend
 
 
@@ -155,8 +198,9 @@ def window_softmax_decomposed(query, key, value, layout, bounds, scale,
     q is fine (indexing copies); strided k/v are copied contiguous up front --
     FA4 mis-addresses slice-strided operands on sm100, and gathers from a strided
     source are slower anyway, so one copy serves both legs. The dense-q leg runs on
-    cuDNN SDPA, which is faster than FA4 at this shape."""
-    from flash_attn.cute.interface import flash_attn_varlen_func
+    SDPA (cuDNN on sm90 and up, faster than FA4 at this shape); the window leg on
+    `varlen_kernel()`."""
+    varlen = varlen_kernel()
 
     plan = _plan(layout, bounds, anchor_frames, query.device)
     if not key.is_contiguous():
@@ -166,7 +210,7 @@ def window_softmax_decomposed(query, key, value, layout, bounds, scale,
     out = torch.empty(query.shape, dtype=query.dtype, device=query.device)
     if len(plan.dense_q):
         qd = query[plan.dense_q]
-        with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+        with sdpa_kernel(_dense_backends()):
             od = scaled_dot_product_attention(
                 qd.transpose(0, 1).unsqueeze(0),
                 key.transpose(0, 1).unsqueeze(0),
@@ -175,10 +219,6 @@ def window_softmax_decomposed(query, key, value, layout, bounds, scale,
     if plan.has_windows:
         kw = key[plan.kv_gather]
         vw = value[plan.kv_gather]
-        ow = flash_attn_varlen_func(
-            query[plan.win_q], kw, vw,
-            cu_seqlens_q=plan.cu_q, cu_seqlens_k=plan.cu_k,
-            max_seqlen_q=plan.max_q, max_seqlen_k=plan.max_k, softmax_scale=scale)
-        ow = ow[0] if isinstance(ow, tuple) else ow
-        out[plan.win_q] = ow
+        out[plan.win_q] = varlen(query[plan.win_q], kw, vw, plan.cu_q, plan.cu_k,
+                                 plan.max_q, plan.max_k, scale)
     return out

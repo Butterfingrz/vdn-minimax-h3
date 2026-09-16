@@ -107,11 +107,7 @@ def _wide(module):
 
 def _check_quantization(config):
     """Before the 66 GB load: torchao is installed, and the config is one it applies."""
-    try:
-        import torchao  # noqa: F401
-    except ImportError as e:
-        raise ImportError("fp8 and quantization_config on this component go through "
-                          "torchao: pip install torchao") from e
+    import torchao  # noqa: F401  -- fp8 and quantization_config go through torchao
     if config is not None and getattr(config, "quant_method", None) != QuantizationMethod.TORCHAO:
         raise ValueError(f"{type(config).__name__} quantises while the weights load, before "
                          "the LoRA merge this component performs; pass a TorchAoConfig, "
@@ -236,7 +232,8 @@ class VDNMiniMaxH3Transformer3DModel(MiniMaxH3Transformer3DModel):
                         local_files_only=None, fp8=None, quantization_config=None,
                         softmax_backend=None, **kwargs):
         # softmax_backend: the window-softmax kernel, "flex" (the checkpoint's default) or
-        # "decomposed" (FA4 varlen; faster on B200, needs flash-attn-4).
+        # "decomposed" (the mask as dense calls: FA4's varlen kernel on sm90 and up,
+        # torch's own on sm8x; faster on B200).
         from safetensors.torch import load_file
 
         source = pretrained_model_name_or_path
