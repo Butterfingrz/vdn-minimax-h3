@@ -16,6 +16,18 @@ posterior sample, rounded to fp16, and normalised. The .pt carries:
 
     prompt, prompt_embeds (L, 5120) bf16, text_token_tags (L,), keyframe_anchors
     ["first", "last"], condition_latents [(1, 24, 1, H/16, W/16) fp32 ...], height, width
+
+`--refs a.png b.png ...` instead of keyframes is a ref2va-like request: the images are
+presented and packed the way the diffusers `ref2va` blocks do it (MiniMaxH3Ref2VASetupStep,
+MiniMaxH3Ref2VATextEncoderStep, MiniMaxH3Ref2VAReferenceEncoderStep), each on a short edge
+of its own (`--ref_size`, default 768; the released Ref2VA recipe's is 2048, four times the
+tokens), labelled `"<Picture i>: "` + vision block and VAE-encoded at that size, and the
+render is by the same t2va/fl2va transformer, not MiniMax-H3's `transformer_ref`. Every
+reference is anchored "ref", which render.py keys the ref2va layout off; the .pt also
+carries `reference_size`.
+
+    python src/inference/encode_keyframes.py --prompt "..." \\
+        --refs ref-1.png ref-2.png --out prompts/mine.pt
 """
 import argparse
 import os
@@ -32,25 +44,27 @@ from diffusers import AutoencoderKLMiniMaxH3
 from diffusers.modular_pipelines.minimax_h3.encoders import encode_vae_condition
 from diffusers.modular_pipelines.minimax_h3.modular_pipeline import resolve_canvas_size
 
-from src.inference.render import PIXEL_MEAN, PIXEL_STD
+from src.inference.render import PIXEL_MEAN, PIXEL_STD, REFERENCE_ANCHOR, conditioning_mode
 from src.paths import H3_BASE, resolve_weights, upstream_snapshot
 
 TEXT_ENCODER_LAYER = 50
 VIDEO_TAG, TEXT_TAG = 0, 1
 CANVAS_MULTIPLE, CANVAS_SHORT_EDGE, CANVAS_MAX_PIXELS = 32, 768, 768 * 1344
+MAX_ASPECT = 4
 KEYFRAME_ENCODE_SEED = 42
+REFERENCE_SHORT_EDGE = 768
 
-# (anchors) -> mode, a substring of its instruction, the instruction. MiniMax-H3 expects
+# (anchors) -> a substring of the mode's instruction, the instruction. MiniMax-H3 expects
 # the prompt to open with the line for its mode (VIDEO_PROMPT_WRITING_GUIDE_base_en.md);
 # i2va's is fixed, the other two name the final shot and the duration.
-KEYFRAME_MODES = {
-    ("first",): ("i2va", "is fully referenced",
+KEYFRAME_INSTRUCTIONS = {
+    ("first",): ("is fully referenced",
                  "For the target video, at 0.00 seconds into the target video, "
                  "<Picture 1> (from [Shot 1]) is fully referenced."),
-    ("last",): ("l2va", "How the reference pictures align",
+    ("last",): ("How the reference pictures align",
                 "How the reference pictures align with the target video \u2014 <Picture 1> "
                 "(from [Shot N]) aligns with the S.SS-second mark of the target video."),
-    ("first", "last"): ("fl2va", "How the reference pictures align",
+    ("first", "last"): ("How the reference pictures align",
                         "How the reference pictures align with the target video \u2014 Picture 1 "
                         "(from Shot 1) aligns with the 0.00-second mark of the target video; "
                         "Picture 2 (from Shot N) aligns with the S.SS-second mark of the "
@@ -80,6 +94,26 @@ def put_on_canvas(keyframes):
             resized = keyframe.resize(resized_size, Image.Resampling.LANCZOS)
             prepared.append(resized.crop((left, top, left + width, top + height)))
     return prepared, height, width
+
+
+def normalize_references(images, short_edge=REFERENCE_SHORT_EDGE):
+    """MiniMaxH3Ref2VASetupStep's rule for an image reference, with `short_edge` in place
+    of its 2048: each image on a short edge of `short_edge` at its own aspect ratio
+    (upscaled if smaller, no area cap), both sides rounded to the canvas multiple,
+    LANCZOS. A reference never binds the target canvas."""
+    prepared = []
+    for image in images:
+        image = image.convert("RGB")
+        width, height = image.size
+        if width > MAX_ASPECT * height or height > MAX_ASPECT * width:
+            raise ValueError(f"a reference image must be within 1:{MAX_ASPECT} and "
+                             f"{MAX_ASPECT}:1, got {width}x{height}")
+        scale = short_edge / min(width, height)
+        target = tuple(max(CANVAS_MULTIPLE, round(side * scale / CANVAS_MULTIPLE) * CANVAS_MULTIPLE)
+                       for side in (width, height))
+        prepared.append(image if image.size == target
+                        else image.resize(target, Image.Resampling.LANCZOS))
+    return prepared
 
 
 def build_presentation(processor, prompt, keyframes):
@@ -125,7 +159,8 @@ def check_instruction(prompt, anchors):
     """The mode these keyframes select. Warns on stderr when the prompt does not open
     with that mode's instruction line -- never refuses: the check is a substring, and a
     prompt is free text."""
-    mode, marker, template = KEYFRAME_MODES[tuple(anchors)]
+    mode = conditioning_mode(anchors)
+    marker, template = KEYFRAME_INSTRUCTIONS[tuple(anchors)]
     opening = next((line for line in prompt.splitlines() if line.strip()), "")
     if marker.lower() not in opening.lower():
         print(f"warning: {mode} keyframes, but the prompt does not open with {mode}'s "
@@ -139,6 +174,11 @@ def main():
     p.add_argument("--prompt", type=str, required=True)
     p.add_argument("--first", type=str, help="keyframe the video starts from (image path)")
     p.add_argument("--last", type=str, help="keyframe the video ends on (image path)")
+    p.add_argument("--refs", type=str, nargs="+", metavar="IMAGE",
+                   help="reference images in the order the prompt numbers them "
+                        "(<Picture 1>, <Picture 2>, ...); a ref2va-like request")
+    p.add_argument("--ref_size", type=int, default=REFERENCE_SHORT_EDGE,
+                   help="short edge every reference is put on")
     p.add_argument("--out", type=str, required=True)
     p.add_argument("--model_root", type=str, default=None,
                    help="a MiniMax-H3 snapshot with processor/ and text_encoder/; "
@@ -146,17 +186,28 @@ def main():
     p.add_argument("--vae_root", type=str, default=H3_BASE, help="root holding vae/")
     p.add_argument("--device", type=str, default="cuda:0")
     args = p.parse_args()
-    if not (args.first or args.last):
-        p.error("pass --first and/or --last (a request without keyframes is t2va: "
+    if bool(args.refs) == bool(args.first or args.last):
+        p.error("pass --first and/or --last, or --refs (a request with neither is t2va: "
                 "use encode_prompt.py)")
     if args.model_root is None:
         args.model_root = upstream_snapshot("processor", "text_encoder")
 
-    pairs = [(anchor, path) for anchor, path in (("first", args.first), ("last", args.last)) if path]
-    anchors = [anchor for anchor, _ in pairs]
-    mode = check_instruction(args.prompt, anchors)
-    keyframes, height, width = put_on_canvas([Image.open(path) for _, path in pairs])
-    print(f"{mode}: canvas {width}x{height}; keyframes {anchors}", flush=True)
+    if args.refs:
+        pairs = [(REFERENCE_ANCHOR, path) for path in args.refs]
+        anchors = [anchor for anchor, _ in pairs]
+        mode = conditioning_mode(anchors)
+        keyframes = normalize_references([Image.open(path) for _, path in pairs], args.ref_size)
+        # MiniMaxH3Ref2VASetupStep's canvas: 16:9, whatever the references' shapes.
+        height, width = resolve_canvas_size(16, 9, CANVAS_MULTIPLE, CANVAS_SHORT_EDGE,
+                                            CANVAS_MAX_PIXELS)
+        print(f"{mode}: canvas {width}x{height}; references "
+              f"{[f'{k.size[0]}x{k.size[1]}' for k in keyframes]}", flush=True)
+    else:
+        pairs = [(anchor, path) for anchor, path in (("first", args.first), ("last", args.last)) if path]
+        anchors = [anchor for anchor, _ in pairs]
+        mode = check_instruction(args.prompt, anchors)
+        keyframes, height, width = put_on_canvas([Image.open(path) for _, path in pairs])
+        print(f"{mode}: canvas {width}x{height}; keyframes {anchors}", flush=True)
     device = args.device
 
     processor = Qwen3VLProcessor.from_pretrained(args.model_root, subfolder="processor")
@@ -185,6 +236,7 @@ def main():
         "keyframe_files": [path for _, path in pairs],
         "condition_latents": condition_latents,
         "height": height, "width": width,
+        **({"reference_size": args.ref_size} if args.refs else {}),
     }, args.out)
     print(f"wrote {args.out}: {len(token_ids)} tokens ({token_tags.count(VIDEO_TAG)} vision rows), "
           f"{len(keyframes)} keyframes {[tuple(c.shape) for c in condition_latents]}", flush=True)

@@ -1,7 +1,8 @@
 # Example prompts
 
-Pre-encoded text embeddings: three T2VA prompts (`example_N.pt`) and one FL2VA prompt
-(`image/example_fl2va.pt`). The text of each:
+Pre-encoded text embeddings: three T2VA prompts (`example_N.pt`), one FL2VA prompt
+(`image/example_fl2va.pt`) and one Ref2VA-Like prompt (`reference/example_ref2va.pt`). The
+text of each:
 
 ## example_0.pt
 
@@ -94,3 +95,49 @@ The soundscape begins with the gentle ambient rushing of the distant canal and a
 **non_diegetic_music:**
 
 An epic, soaring orchestral score plays throughout, starting with a steady, rhythmic pulse that builds in tempo and intensity as the camera accelerates through the narrow environments. The music swells into a majestic, triumphant crescendo with soaring strings and booming brass the moment the camera crests the roofline, perfectly matching the reveal of the grand city panorama.
+
+## reference/example_ref2va.pt
+
+References `reference/ref-1.png` to `reference/ref-6.png`, in that order.
+
+**subject_definitions:**
+
+&lt;Subject 1&gt; is the blonde woman wearing a light pink button-up shirt in &lt;Picture 1&gt;.
+
+&lt;Subject 2&gt; is the young man with messy brown hair wearing a dark gray hoodie in &lt;Picture 2&gt;.
+
+&lt;Subject 3&gt; is the white Samoyed dog defined by the multi-view reference board consisting of &lt;Picture 3&gt;, &lt;Picture 4&gt;, and &lt;Picture 5&gt;, featuring a thick, fluffy pure white coat, dark eyes, and a pink tongue.
+
+&lt;Subject 4&gt; is the cafe lounge environment in &lt;Picture 6&gt;, featuring a prominent tufted orange sofa, a rustic wooden coffee table, exposed brick walls, and a glowing neon Central Perk sign.
+
+**summary:**
+
+[reference generation] The target video takes place in &lt;Subject 4&gt;, where &lt;Subject 1&gt; is sitting on the orange sofa eating a cookie. &lt;Subject 2&gt; walks into the cafe leading &lt;Subject 3&gt;, a fluffy white Samoyed, on a leash. The dog eagerly reaches for the cookie, prompting a playful exchange between the characters. &lt;Subject 2&gt; sits down next to her on the sofa, excusing his dog's behavior, and &lt;Subject 1&gt; responds with an amused, warm remark.
+
+**retention_analysis:**
+
+&lt;Subject 1&gt; (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the target video features the same blonde woman in the light pink button-up shirt.
+
+&lt;Subject 2&gt; (appears in [Shot 1], [Shot 2]): fully_preserved - the target video features the same young man with messy brown hair wearing the dark gray hoodie.
+
+&lt;Subject 3&gt; (appears in [Shot 1], [Shot 2]): fully_preserved - the target video features the same thick, fluffy pure white Samoyed dog.
+
+&lt;Subject 4&gt; (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the target video takes place in the same cafe lounge environment, featuring the tufted orange sofa, rustic coffee table, and brick walls.
+
+**detailed_description:**
+
+The target video is in a realistic live-action comedy style with warm, natural indoor lighting that gently illuminates the scene.
+
+[Shot 1] The video opens with a medium-wide shot in &lt;Subject 4&gt;, a cozy cafe lounge featuring a tufted orange sofa, a rustic wooden coffee table in the foreground, exposed brick walls, and a glowing neon Central Perk sign in the background. &lt;Subject 1&gt;, a blonde woman wearing a light pink button-up shirt (S1, presenting a clear, playful female voice), sits comfortably on the right side of the orange sofa, holding a half-eaten cookie in her right hand. Quiet, natural cafe room tone and the subtle metallic jingle of a dog collar are audible. &lt;Subject 2&gt;, a young man with messy brown hair wearing a dark gray hoodie (S2, presenting a smooth, apologetic male voice), walks into the frame from the left, holding a slack leather leash. He is walking &lt;Subject 3&gt;, a thick, fluffy pure white Samoyed dog with dark eyes, a bright pink tongue, and a highly textured fur coat. As they approach the seating area, &lt;Subject 3&gt; eagerly stretches its head forward, aiming its nose directly at the cookie in &lt;Subject 1&gt;'s hand. &lt;Subject 1&gt; defensively pulls her arm back, bringing the cookie safely toward her chest to protect the treat. Looking up at the dog and its owner, &lt;Subject 1&gt; (S1) says, &lt;d&gt;[English] Hey! Watch your dog!&lt;/d&gt; After she speaks, her mouth closes in mild surprise while she keeps her hand pulled back securely, and the quiet cafe room tone continues to play underneath the ambient scene.
+
+[Shot 2] At 00:05.200, the shot cuts to a closer medium two-shot framing both characters on the sofa. &lt;Subject 2&gt; sits down on the left side of the orange sofa next to &lt;Subject 1&gt;. He gently gathers the slack leash in his left hand, pulling it closer to steady &lt;Subject 3&gt; so the fluffy dog sits obediently beside his leg. The ambient cafe room tone remains the only background sound, emphasizing the quiet interaction. &lt;Subject 2&gt; turns his head to look directly at &lt;Subject 1&gt;, offering a soft, apologetic smile to defuse the tension. Keeping his relaxed posture, &lt;Subject 2&gt; (S2) says, &lt;d&gt;[English] He just likes cookies more than me.&lt;/d&gt; Following his spoken line, the room tone continues through a brief, deliberate comic pause; &lt;Subject 2&gt; maintains his charming, sheepish smile while calmly petting the dog's thick coat, and &lt;Subject 1&gt; processes his charming excuse.
+
+[Shot 3] At 00:10.100, the shot cuts to an intimate close-up of &lt;Subject 1&gt;. The ambient cafe room tone persists in the background. She looks off-screen to the left toward &lt;Subject 2&gt; and &lt;Subject 3&gt;, her initial surprise melting as her expression softens into a warm, amused smile. Easing her posture, &lt;Subject 1&gt; (S1) replies, &lt;d&gt;[English] Well, he has good taste at least.&lt;/d&gt; Immediately after she finishes speaking, her lips meet in a relaxed, closed-mouth smile. She slightly tilts her head to the side and lowers her cookie hand down out of frame, shifting her body weight comfortably against the sofa cushion. She holds this lingering, amused gaze steadily as the physical movement concludes. The quiet cafe room tone remains audible until the final frame ends.
+
+**overall_soundscape:**
+
+The video features a natural diegetic soundscape consisting of quiet cafe room tone, the subtle jingles of a dog collar, and clear, synchronized English dialogue between the two characters.
+
+**non_diegetic_music:**
+
+N/A

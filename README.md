@@ -228,6 +228,56 @@ torchrun --standalone --nproc_per_node=8 src/inference/infer_ulysses.py \
   render.out=results/example_fl2va.mp4
 ```
 
+#### Supporting Ref2VA-Like Task
+
+The MiniMax-H3 FL2VA checkpoints have zero-shot ability to take reference images and perform the way the MiniMax-H3 Ref2VA checkpoints generate videos. Each reference image appears in the prompt as a `<Picture i>` entry and is accompanied by its own block of conditioning rows placed before the video tokens.
+
+Generation still uses the FL2VA weights rather than MiniMax-H3's separate Ref2VA transformer, which is why we describe this mode as Ref2VA-like rather than Ref2VA proper.
+
+An example is provided in [prompts/reference/](prompts/reference/), using six reference images that cover two characters, a Samoyed, and a cafe:
+
+<table>
+<tr>
+<td width="16%"><img src="prompts/reference/ref-1.png" alt="Picture 1"></td>
+<td width="16%"><img src="prompts/reference/ref-2.png" alt="Picture 2"></td>
+<td width="16%"><img src="prompts/reference/ref-3.png" alt="Picture 3"></td>
+<td width="16%"><img src="prompts/reference/ref-4.png" alt="Picture 4"></td>
+<td width="16%"><img src="prompts/reference/ref-5.png" alt="Picture 5"></td>
+<td width="16%"><img src="prompts/reference/ref-6.png" alt="Picture 6"></td>
+</tr>
+<tr>
+<td align="center"><code>ref-1.png</code></td>
+<td align="center"><code>ref-2.png</code></td>
+<td align="center"><code>ref-3.png</code></td>
+<td align="center"><code>ref-4.png</code></td>
+<td align="center"><code>ref-5.png</code></td>
+<td align="center"><code>ref-6.png</code></td>
+</tr>
+</table>
+
+Render it with:
+
+```bash
+python src/inference/infer.py \
+  --config configs/inference/8nfe_tuned_fp8.yaml \
+  checkpoint=ckpts/stage-dmd-step-250 \
+  render.prompt_file=prompts/reference/example_ref2va.pt \
+  render.out=results/example_ref2va.mp4
+```
+
+and you should get something like this:
+
+<video src="https://github.com/user-attachments/assets/99b02319-4f20-49c6-86e7-bb0ed8a48255" controls muted></video>
+
+For your own references, encode the prompt together with the images, in the order the prompt numbers them:
+
+```bash
+python src/inference/encode_keyframes.py --prompt "..." \
+  --refs ref-1.png ref-2.png ref-3.png --out prompts/reference/mine.pt
+```
+
+Each reference is put on a 768-pixel short edge (`--ref_size`). The prompt defines its subjects by picture, in the format of MiniMax-H3's [reference prompt guide](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md).
+
 #### Choosing an inference configuration
 
 We support both single-GPU and multi-GPU inference for the released model. Single-GPU scripts auto-detect the best kernels for your GPU. Multi-GPU scripts vary for different hardware (H200, B200) to achieve the best performance.

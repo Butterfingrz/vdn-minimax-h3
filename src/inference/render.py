@@ -4,13 +4,14 @@ atomic .partial.mp4 write.
 """
 import os
 import time
+from types import SimpleNamespace
 
 import torch
 
 from diffusers import (AutoencoderKLMiniMaxH3, AutoencoderKLMiniMaxH3Audio,
                        MiniMaxH3Scheduler, MiniMaxH3Transformer3DModel)
 from diffusers.modular_pipelines.minimax_h3.before_denoise import (
-    MiniMaxH3PrepareLayoutStep, patchify_video_latents)
+    MiniMaxH3PrepareLayoutStep, MiniMaxH3Ref2VAPrepareLayoutStep, patchify_video_latents)
 from diffusers.modular_pipelines.minimax_h3.modular_pipeline import (
     MINIMAX_H3_AUDIO_CHANNELS as AUDIO_CHANNELS, MINIMAX_H3_AUDIO_TAG as AUDIO_TAG,
     MINIMAX_H3_FPS as FPS, MINIMAX_H3_VIDEO_TAG as VIDEO_TAG, align_num_frames,
@@ -32,6 +33,22 @@ LATENT_H, LATENT_W = 48, 84
 # 0.999 is the t the fl2va keyframes are held at, just short of clean.
 PIXEL_MEAN, PIXEL_STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
 KEYFRAME_NOISE_AUG = 0.999
+# The anchor encode_keyframes.py gives a reference image (`--refs`); a cache whose anchors
+# are all of it is a ref2va-like request and takes the ref2va layout in generate_latents.
+REFERENCE_ANCHOR = "ref"
+KEYFRAME_MODES = {("first",): "i2va", ("last",): "l2va", ("first", "last"): "fl2va"}
+
+
+def is_reference_request(anchors):
+    return bool(anchors) and all(anchor == REFERENCE_ANCHOR for anchor in anchors)
+
+
+def conditioning_mode(anchors):
+    """What a cache's anchors make the request: i2va, l2va or fl2va by which keyframes are
+    anchored, ref2va when every anchor is a reference."""
+    if is_reference_request(anchors):
+        return "ref2va"
+    return KEYFRAME_MODES[tuple(anchors)]
 
 
 def load_models(model_root: str, device: str, vae_source: str = None,
@@ -57,10 +74,10 @@ def load_models(model_root: str, device: str, vae_source: str = None,
 
 
 def load_prompt(prompt_file: str, device: str):
-    """A prompt cache from encode_prompt.py (t2va) or encode_keyframes.py (i2va / fl2va);
-    both carry prompt_embeds and text_token_tags. Returns (prompt_embeds,
+    """A prompt cache from encode_prompt.py (t2va) or encode_keyframes.py (keyframes or
+    references); both carry prompt_embeds and text_token_tags. Returns (prompt_embeds,
     text_token_tags, conditions); `conditions` is (keyframe_anchors, condition_latents)
-    for a keyframe cache, else None."""
+    for a keyframe or reference cache, else None."""
     text = torch.load(prompt_file, map_location="cpu", weights_only=True)
     conditions = None
     if text.get("keyframe_anchors"):
@@ -84,7 +101,13 @@ def generate_latents(transformer, prompt_embeds, text_token_tags, num_frames, nu
     ever stepped -- the diffusers fl2va blocks, inlined. On a hybrid model the
     conditioning rows fall outside the layout's video span, i.e. they are attended like
     text and audio: dense in both directions by the window softmax and absent from the
-    linear scan."""
+    linear scan.
+
+    Anchors that are all "ref" (encode_keyframes.py --refs) are image references instead:
+    the diffusers ref2va layout, `[text | one block per reference | audio | video]`, each
+    block on its own geometry and its own rotary slot ahead of the generated rows. The
+    noise, the pinning and the hybrid treatment are the keyframes', and the transformer
+    is whatever was loaded, the t2va/fl2va one, not MiniMax-H3's transformer_ref."""
     num_frames = align_num_frames(num_frames, 17, 5)
     num_latent_frames = video_latent_num_frames(num_frames, 17, 5)
     num_audio_latents = audio_latent_num_frames(num_frames)
@@ -93,12 +116,20 @@ def generate_latents(transformer, prompt_embeds, text_token_tags, num_frames, nu
     channels = transformer.config.in_channels                       # 24
     frame_h, frame_w = LATENT_H // patch[1], LATENT_W // patch[2]
 
-    position_ids, token_tags, video_indices, audio_indices, text_indices, num_condition_rows, _ = (
-        MiniMaxH3PrepareLayoutStep.build_packed_sequence(
+    if is_reference_request(anchors):
+        # The layout step reads a reference's modality only (`kind`, `has_audio`); the
+        # geometry comes from the latents.
+        references = [SimpleNamespace(kind="image", has_audio=False) for _ in anchors]
+        layout = MiniMaxH3Ref2VAPrepareLayoutStep.build_ref2va_packed_sequence(
+            text_token_tags, references, condition_latents, [], num_latent_frames, LATENT_H,
+            LATENT_W, num_audio_latents, patch, AUDIO_CHANNELS, AUDIO_TAG, VIDEO_TAG,
+        )
+    else:
+        layout = MiniMaxH3PrepareLayoutStep.build_packed_sequence(
             text_token_tags, num_latent_frames, LATENT_H, LATENT_W, num_audio_latents,
             patch, AUDIO_CHANNELS, AUDIO_TAG, VIDEO_TAG, keyframe_anchors=anchors,
         )
-    )
+    position_ids, token_tags, video_indices, audio_indices, text_indices, num_condition_rows, _ = layout
     position_ids, token_tags = position_ids.to(device), token_tags.to(device)
     video_indices, audio_indices, text_indices = (
         video_indices.to(device), audio_indices.to(device), text_indices.to(device),
@@ -123,8 +154,8 @@ def generate_latents(transformer, prompt_embeds, text_token_tags, num_frames, nu
     audio_scheduler.set_timesteps(num_steps + 1, device=device)
 
     generator = torch.Generator(device).manual_seed(seed)
-    # The conditioning noise is drawn first, one draw per keyframe, before the generated
-    # rows' noise (MiniMaxH3PrepareConditionLatentsStep's order).
+    # The conditioning noise is drawn first, one draw per keyframe or reference, before
+    # the generated rows' noise (MiniMaxH3PrepareConditionLatentsStep's order).
     condition_rows = []
     for condition in condition_latents:
         noise = torch.randn(condition.shape, generator=generator, device=device, dtype=torch.float32)

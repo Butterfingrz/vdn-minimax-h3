@@ -6,9 +6,9 @@ path is intentionally untouched. The rank layout, optimisation ladder, profiling
 warm-up are the ``parallel.*`` / ``render.warmup_steps`` config fields -- no
 environment variable is read beyond torchrun's own LOCAL_RANK/WORLD_SIZE.
 
-t2va, i2va and fl2va all run here: the conditioning rows a keyframe cache adds sit
-outside the layout's video span, so they shard, gather and attend as ordinary global
-rows and no collective changes shape.
+t2va, i2va, fl2va and the ref2va-like request all run here: the conditioning rows a
+keyframe or reference cache adds sit outside the layout's video span, so they shard,
+gather and attend as ordinary global rows and no collective changes shape.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from src.inference.utils.assemble import (
     render_record,
     write_json,
 )
-from src.inference.render import decode_and_save, generate_latents, load_prompt
+from src.inference.render import conditioning_mode, decode_and_save, generate_latents, load_prompt
 from src.inference.utils.ulysses import init_ulysses, install_ulysses
 
 
@@ -77,7 +77,7 @@ def main():
 
     prompt_embeds, text_token_tags, conditions = load_prompt(cfg.render.prompt_file, str(device))
     if conditions and runtime.is_main:
-        print(f"keyframes anchored {conditions[0]}", flush=True)
+        print(f"{conditioning_mode(conditions[0])}: keyframes anchored {conditions[0]}", flush=True)
     runtime.barrier()
     torch.cuda.synchronize(device)
     model_setup_seconds = time.perf_counter() - process_started
