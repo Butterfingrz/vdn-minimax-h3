@@ -42,7 +42,7 @@ git clone https://github.com/OpenVDN/vdn-minimax-h3.git
 cd vdn-minimax-h3
 ```
 
-2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` = `2.13.0+cu129`) and installing FlashAttention 4: on Hopper and Blackwell the window softmax runs on its kernels, through [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/) or directly. On Ampere and Ada, or without it, the window softmax runs on FlexAttention's Triton kernel and on PyTorch's own varlen attention.
+2. Create the environment. We recommend PyTorch 2.13 (`torch.__version__` = `2.13.0+cu129`) and installing FlashAttention 4: on Hopper and data-center Blackwell the window softmax runs on its kernels, through [FlexAttention's Flash backend](https://pytorch.org/blog/flexattention-flashattention-4-fast-and-flexible/) or directly. On Ampere, Ada and consumer Blackwell (RTX 50 series), or without it, the window softmax runs on FlexAttention's Triton kernel and on PyTorch's own varlen attention.
 
 ```bash
 conda create -n vdn python=3.12 -y
@@ -52,7 +52,7 @@ pip install uv
 uv pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129
 ```
 
-3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl` dependency); on Ampere and Ada neither it nor the regular `flash-attn` is used, as attention there runs on PyTorch's own kernels.
+3. Install the other packages shown in `pyproject.toml`, `flash-attn-4` included (`--prerelease=allow` is needed for its pre-release `nvidia-cutlass-dsl` dependency); on Ampere, Ada and consumer Blackwell neither it nor the regular `flash-attn` is used, as attention there runs on PyTorch's own kernels.
 
 ```bash
 uv pip install --prerelease=allow -e .
@@ -106,7 +106,7 @@ apply_group_offloading(pipe.transformer, onload_device="cuda", offload_type="blo
                        num_blocks_per_group=1, use_stream=True)
 ```
 
-The transformer can be offloaded per model or per block, but not per leaf. Its window softmax runs on FlexAttention; `softmax_backend={"transformer": "decomposed"}` in `load_components` selects the decomposition the scripts above use instead, FA4's varlen kernel on Hopper and Blackwell and PyTorch's on Ampere and Ada.
+The transformer can be offloaded per model or per block, but not per leaf. Its window softmax runs on FlexAttention; `softmax_backend={"transformer": "decomposed"}` in `load_components` selects the decomposition the scripts above use instead, FA4's varlen kernel on Hopper and data-center Blackwell and PyTorch's on Ampere, Ada and consumer Blackwell.
 
 fp8 is torchao's (`pip install torchao`): `fp8={"transformer": True}` in `load_components`, or `--fp8` for the script, puts every wide Linear in fp8 e4m3, and a `quantization_config` of your own, a `TorchAoConfig`, is applied in its place after the LoRA merge.
 

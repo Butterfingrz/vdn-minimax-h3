@@ -8,6 +8,20 @@ import torch.nn.functional as F
 
 from src.models.sequence_layout import SequenceLayout
 
+# The cards FA4 ships kernels for: sm90 (Hopper), sm100 and sm110 (data-center Blackwell).
+# Ampere, Ada and consumer Blackwell (sm120) are not among them, whatever their capability
+# number, so every FA4 gate tests membership here, never `>=`.
+FA4_MAJORS = (9, 10, 11)
+
+
+def has_fa4_kernels(device=0):
+    """Whether `device` is a card FA4 has kernels for, i.e. where its CuTe varlen kernel
+    and FlexAttention's FLASH backend are the right choice."""
+    if not torch.cuda.is_available():
+        return False
+    resolved = torch.device(device)
+    return resolved.type == "cuda" and torch.cuda.get_device_capability(resolved)[0] in FA4_MAJORS
+
 
 def window_bounds(num_frames, radius, chunk=0):
     """Per-frame inclusive softmax-window bounds [lo, hi], unclamped.

@@ -14,6 +14,7 @@ from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
 from src.checkpoints.key_mapping import ANCHOR_FRAME_MODES
 from src.models.sequence_layout import SequenceLayout
+from src.models.softmax_attention.window import has_fa4_kernels
 from src.models.softmax_attention.window import window_bounds  # noqa: F401  (re-export for callers)
 
 
@@ -166,10 +167,7 @@ def flash_backend_available(device):
     is generic. On the cards that have it flash-attn-4 is required: its absence raises
     from the first FLASH call."""
     if "flash_available" not in _FLEX_CACHE:
-        resolved = torch.device(device)
-        _FLEX_CACHE["flash_available"] = (
-            resolved.type == "cuda"
-            and torch.cuda.get_device_capability(resolved)[0] in (9, 10, 11))
+        _FLEX_CACHE["flash_available"] = has_fa4_kernels(device)
     return _FLEX_CACHE["flash_available"]
 
 

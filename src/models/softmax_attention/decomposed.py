@@ -22,10 +22,11 @@ hybrid layer): training keeps the flex path. No fallback: a failure here raises 
 than silently downgrading to a slower kernel.
 
 The window leg's varlen kernel is chosen once per process by the card (`varlen_kernel`):
-FA4's CuTe kernel on sm90 and up, where FA4 has kernels written for the card; torch's own
-`varlen_attn` (its flash kernels, the FA2 lineage, sm80 and up) on sm8x. Nothing is
-caught: a missing kernel raises with the install to fix. The dense leg is torch SDPA:
-cuDNN on sm90 and up, where it beats FA4 at this shape, SDPA's own choice elsewhere.
+FA4's CuTe kernel on sm90, sm100 and sm110, the cards FA4 has kernels for; torch's own
+`varlen_attn` (its flash kernels, the FA2 lineage, sm80 and up) elsewhere, i.e. on sm8x
+and on consumer Blackwell (sm120). Nothing is caught: a missing kernel raises with the
+install to fix. The dense leg is torch SDPA: cuDNN on the FA4 cards, where it beats FA4
+at this shape, SDPA's own choice elsewhere.
 """
 
 
@@ -34,15 +35,12 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.nn.functional import scaled_dot_product_attention
 
 from src.models.sequence_layout import SequenceLayout
+from src.models.softmax_attention.window import has_fa4_kernels
 
 _PLAN_CACHE = {}
 _KERNEL_CACHE = {}
 MAX_CACHED_PLANS = 4
 SOFTMAX_BACKENDS = ("auto", "flex", "decomposed", "ref")
-
-
-def _capability_major():
-    return torch.cuda.get_device_capability(0)[0] if torch.cuda.is_available() else 0
 
 
 def _fa4_varlen():
@@ -69,19 +67,18 @@ def _torch_varlen():
 
 
 def varlen_kernel():
-    """The varlen kernel the window leg runs on, resolved once per process: FA4's on
-    sm90 and up, torch's own on sm8x (see the header). An ImportError here is the
-    install to fix: flash-attn-4 on sm90 and up, torch >= 2.13 on sm8x."""
+    """The varlen kernel the window leg runs on, resolved once per process: FA4's on the
+    cards it has kernels for, torch's own elsewhere (see the header). An ImportError
+    here is the install to fix: flash-attn-4 on those cards, torch >= 2.13 elsewhere."""
     if "varlen" not in _KERNEL_CACHE:
-        _KERNEL_CACHE["varlen"] = (_fa4_varlen() if _capability_major() >= 9
-                                   else _torch_varlen())
+        _KERNEL_CACHE["varlen"] = _fa4_varlen() if has_fa4_kernels() else _torch_varlen()
     return _KERNEL_CACHE["varlen"]
 
 
 def _dense_backends():
-    """cuDNN SDPA on sm90 and up, where it is faster than FA4 at the dense leg's shape;
+    """cuDNN SDPA on the FA4 cards, where it is faster than FA4 at the dense leg's shape;
     elsewhere SDPA picks among its own kernels."""
-    if _capability_major() >= 9:
+    if has_fa4_kernels():
         return [SDPBackend.CUDNN_ATTENTION]
     return [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION,
             SDPBackend.CUDNN_ATTENTION]      # no MATH: it materialises the full score matrix
