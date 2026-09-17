@@ -64,6 +64,8 @@ uv pip install --prerelease=allow -e .
 bash scripts/setup_diffusers.sh
 ```
 
+5. Read [H3-Context-IR](https://platform.minimax.io/docs/api-reference/video-generation-v2-h3-context-ir) and the official [prompt-writing skills](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills). Rewriting your prompt with them before encoding it can greatly improve the generated video quality for VDN-H3 inference.
+
 ## Quick Start — Generate your own video
 
 ### Inference with Diffusers
@@ -178,8 +180,6 @@ python src/inference/infer.py \
   render.prompt_file=prompts/mine.pt \
   render.out=results/mine.mp4
 ```
-
-We strongly recommend rewriting it first using [H3-Context-IR](https://platform.minimax.io/docs/api-reference/video-generation-v2-h3-context-ir) or the official [prompt-writing skills](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills) before encoding it. This can greatly improve the generated video quality.
 
 #### Supporting FL2VA, I2VA, and L2VA
 
