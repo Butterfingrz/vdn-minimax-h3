@@ -106,9 +106,7 @@ apply_group_offloading(pipe.transformer, onload_device="cuda", offload_type="blo
                        num_blocks_per_group=1, use_stream=True)
 ```
 
-The transformer can be offloaded per model or per block, but not per leaf. Its window softmax runs on FlexAttention; `softmax_backend={"transformer": "decomposed"}` in `load_components` selects the decomposition the scripts above use instead, FA4's varlen kernel on Hopper and data-center Blackwell and PyTorch's on Ampere, Ada and consumer Blackwell.
-
-fp8 is torchao's (`pip install torchao`): `fp8={"transformer": True}` in `load_components`, or `--fp8` for the script, puts every wide Linear in fp8 e4m3, and a `quantization_config` of your own, a `TorchAoConfig`, is applied in its place after the LoRA merge.
+Offloading granularity, the window-softmax backend, fp8 and your own quantization config are described in [docs/diffusers.md](docs/diffusers.md).
 
 ### Inference with SGLang
 
@@ -131,6 +129,8 @@ sglang serve \
 With MXFP8, denoising takes 47.6, 25.9, 13.1, and 6.9 seconds on 1, 2, 4, and 8 B200 GPUs, respectively. The 8-GPU configuration returns the finished 14.4-second video in about 9.0 seconds end-to-end after warm-up. See the [MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill) for more details.
 
 ### Inference with our repository
+
+The configs, kernels, fp8, the eight-GPU layout and the prompt caches are described in [docs/inference.md](docs/inference.md).
 
 #### Download the weights
 
