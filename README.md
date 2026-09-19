@@ -1,6 +1,6 @@
 # Video DeltaNet: Hybrid Attention to Speed Up Video Models with Near-Lossless Quality
 
-[[`Blog`](https://openvdn.github.io/)] [[`Code`](https://github.com/OpenVDN/vdn-minimax-h3)] [[`🤗 Weights`](https://huggingface.co/OpenVDN/vdn-minimax-h3)] [[`ModelScope`](https://www.modelscope.ai/models/OpenVDN/vdn-minimax-h3)] [[`License`](#license)]
+[[`📄 Paper`](https://arxiv.org/abs/2609.20744)] [[`Blog`](https://openvdn.github.io/)] [[`Code`](https://github.com/OpenVDN/vdn-minimax-h3)] [[`🤗 Weights`](https://huggingface.co/OpenVDN/vdn-minimax-h3)] [[`ModelScope`](https://www.modelscope.ai/models/OpenVDN/vdn-minimax-h3)] [[`License`](#license)]
 
 We release **VDN-Minimax-H3** (**VDN-H3**), a hybrid-attention model that generates video faster than it plays, powered by [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3). It offers these key features:
 
@@ -26,6 +26,7 @@ We present some samples of generated videos here:
 
 ## News
 
+- **September 17, 2026:** The [Video DeltaNet paper](https://arxiv.org/abs/2609.20744) is available on arXiv.
 - **September 14, 2026:** [SGLang Diffusion](https://github.com/sgl-project/sglang) now supports VDN-H3, achieving its fastest reported performance: 6.9 seconds for denoising and about 9.0 seconds end-to-end for a 14.4-second video on 8×B200 GPUs. See the [MiniMax-H3 cookbook](https://github.com/sgl-project/sglang/blob/main/docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx#7-vdn-h3-hybrid-attention-8-step-distill) for more details.
 - **September 8, 2026:** We support I2VA, FL2VA and L2VA now with the same checkpoint.
 - **September 6, 2026:** We released the [VDN-H3 blog](https://openvdn.github.io/), [training and inference code](https://github.com/OpenVDN/vdn-minimax-h3), and [model weights](https://huggingface.co/OpenVDN/vdn-minimax-h3).
