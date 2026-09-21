@@ -1,6 +1,6 @@
 # Inference with this repository
 
-How the repository's own stack renders: the entry points, the configs, the kernels behind them, fp8, the eight-GPU layout, and what a prompt cache carries. The commands to run are in the [README](../README.md#inference-with-our-repository); the portable diffusers path is in [diffusers.md](diffusers.md).
+How the repository's own stack renders: the entry points, the configs, the kernels behind them, fp8, the eight-GPU layout, memory, and what a prompt cache carries. The commands to run are in the [README](../README.md#inference-with-our-repository); the portable diffusers path is in [diffusers.md](diffusers.md).
 
 ## Entry points
 
@@ -72,7 +72,7 @@ Three implementations of the same windowed attention:
 - `decomposed`: the mask as a union of dense attentions, with no mask machinery. Global rows attend to everything in one dense call, and the frames that share a window go through one variable-length call.
 - `ref`: the eager reference, for parity checks.
 
-`auto` is `decomposed` on every CUDA device. It is the faster kernel on B200 and matches `flex` on H200. The two differ by bf16 reduction order only. Each picks its kernel by the card:
+`auto` is `decomposed` on every CUDA device. It is the faster kernel on B200 and matches `flex` on H200. The two differ by bf16 reduction order, and by their transient memory, which [Memory](#memory) measures. Each picks its kernel by the card:
 
 | Card | `flex` | `decomposed` |
 |---|---|---|
@@ -106,6 +106,39 @@ The layout is branch-parallel: `parallel.softmax_ranks` ranks run the softmax he
 Only rank 0 loads the decoders and writes the mp4. T2VA, keyframe and reference caches all run here: conditioning rows sit outside the video span, so they shard and attend as ordinary global rows.
 
 Setup is dominated by eight ranks reading 66 GB each, so keep `ckpts/` on a local disk. The last log line splits the time into setup, denoise, and decode plus encode. Eight-GPU renders are not bit-reproducible from run to run; one-GPU renders are.
+
+## Memory
+
+The fp8 configs fit an 80 GB card, on one GPU and on eight. Peak GPU memory in GiB at 345 frames and 8 evaluations, on the T2VA example, measured on an H200 with the CUDA allocator capped at 78 GiB:
+
+| Phase | One GPU | Eight GPUs, per rank |
+|---|---:|---:|
+| Load: the bf16 transformer | 61.7 | 61.7 |
+| Assembly, through the fp8 conversion | 65.9 | 65.9 |
+| Denoise | 71.4 | 55.9 to 60.4 |
+| Decode | 67.8 | 68.5, rank 0 only |
+
+The decoders wait on the CPU and move to the GPU when denoising is over, and the fp8 conversion releases each bf16 weight as it goes, so the model never sits on the card twice. On one GPU the bf16 configs need more than 80 GB: 66 GiB of weights plus 26 GiB of transients.
+
+The two encoders fit the same card: `encode_prompt.py` peaks at 63.2 GiB, and `encode_keyframes.py` with six references at 69.2.
+
+Conditioning rows raise the denoise peak, and the window kernel decides by how much. `decomposed` gathers the global rows once per window group, and `flex` has no gather. One GPU, the same cap:
+
+| Request | Window kernel | Denoise peak | Seconds per evaluation |
+|---|---|---:|---:|
+| T2VA | `decomposed` | 71.4 | 11.8 |
+| T2VA | `flex` | 62.7 | 11.8 |
+| FL2VA example | `decomposed` | 74.4 | 14.2 |
+| Ref2VA-like example | `decomposed` | out of memory | 19.1 without the cap |
+| Ref2VA-like example | `flex` | 63.8 | 17.8 |
+
+`auto` stays `decomposed`. On an 80 GB card, render a reference cache with `kernels.softmax_backend=flex`:
+
+```bash
+python src/inference/infer.py --config configs/inference/8nfe_tuned_fp8.yaml \
+  checkpoint=ckpts/stage-dmd-step-250 kernels.softmax_backend=flex \
+  render.prompt_file=prompts/reference/example_ref2va.pt render.out=results/example_ref2va.mp4
+```
 
 ## Prompt caches and conditioning
 
