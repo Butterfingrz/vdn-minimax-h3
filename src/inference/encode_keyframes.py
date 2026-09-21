@@ -44,7 +44,8 @@ from diffusers import AutoencoderKLMiniMaxH3
 from diffusers.modular_pipelines.minimax_h3.encoders import encode_vae_condition
 from diffusers.modular_pipelines.minimax_h3.modular_pipeline import resolve_canvas_size
 
-from src.inference.render import PIXEL_MEAN, PIXEL_STD, REFERENCE_ANCHOR, conditioning_mode
+from src.inference.render import PIXEL_MEAN, PIXEL_STD
+from src.inference.utils.prompt_cache import REFERENCE_ANCHOR, conditioning_mode
 from src.paths import H3_BASE, resolve_weights, upstream_snapshot
 
 TEXT_ENCODER_LAYER = 50

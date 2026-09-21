@@ -35,7 +35,8 @@ from src.inference.utils.assemble import (
     render_record,
     write_json,
 )
-from src.inference.render import conditioning_mode, decode_and_save, generate_latents, load_prompt
+from src.inference.render import decode_and_save, generate_latents
+from src.inference.utils.prompt_cache import conditioning_mode, load_prompt
 from src.inference.utils.ulysses import init_ulysses, install_ulysses
 
 

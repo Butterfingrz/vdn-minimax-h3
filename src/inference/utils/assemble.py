@@ -22,11 +22,13 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
+from diffusers import (AutoencoderKLMiniMaxH3, AutoencoderKLMiniMaxH3Audio,
+                       MiniMaxH3Transformer3DModel)
+
 from src.checkpoints import checkpoint_head_sha256, load_checkpoint
 from src.config import resolved_dict
 from src.inference.utils.lora import load_external_lora, merge_lora_state
-from src.inference.render import DEFAULT_MODEL_ROOT, load_models
-from src.paths import resolve_weights
+from src.paths import H3_BASE, resolve_weights
 from src.models.factory import load_model_weights
 from src.models.hybrid_transform import (apply_hybrid_attention_transform, iter_hybrids,
                                          set_inference_mode, set_softmax_backend)
@@ -69,6 +71,33 @@ def flex_latch_state():
             "flash_available": _FLEX_CACHE.get("flash_available")}
 
 
+def load_models(model_root: str, device: str, vae_source: str = None,
+                load_decoders: bool = True):
+    """`model_root` holds the transformer; both decoders come from `vae_source`, default
+    the release copy (H3_BASE: transformer/ vae/ audio_vae/, which the dense
+    `checkpoint=null` render loads from too). Ranks that never decode pass
+    `load_decoders=False` and get (transformer, None, None).
+
+    The decoders stay on the CPU: `decode_and_save` brings them to the GPU when
+    denoising is over. Their 10 GB next to the bf16 transformer, which is what the card
+    holds until the fp8 conversion, is what an 80 GB card does not have."""
+    vae_source = resolve_weights(vae_source or H3_BASE)
+    model_root = resolve_weights(model_root)
+    transformer = MiniMaxH3Transformer3DModel.from_pretrained(
+        model_root, subfolder="transformer", torch_dtype=torch.bfloat16
+    ).to(device)
+    transformer.eval().requires_grad_(False)
+
+    if not load_decoders:
+        return transformer, None, None
+
+    vae = AutoencoderKLMiniMaxH3.from_pretrained(vae_source, subfolder="vae")
+    audio_vae = AutoencoderKLMiniMaxH3Audio.from_pretrained(vae_source, subfolder="audio_vae")
+    vae.eval()
+    audio_vae.eval()
+    return transformer, vae, audio_vae
+
+
 def build_inference_model(cfg, device, *, load_decoders: bool = True,
                           log: bool = True) -> InferenceModel:
     say = print if log else (lambda *a, **k: None)
@@ -80,7 +109,7 @@ def build_inference_model(cfg, device, *, load_decoders: bool = True,
             raise RuntimeError(f"{cfg.checkpoint} is a truncated smoke-test artifact")
 
     base_source = cfg.base_source or (
-        art.model_spec["base"]["source"] if art else DEFAULT_MODEL_ROOT)
+        art.model_spec["base"]["source"] if art else H3_BASE)
     transformer, vae, audio_vae = load_models(
         base_source, device, vae_source=cfg.vae_source, load_decoders=load_decoders)
 

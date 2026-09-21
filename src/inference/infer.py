@@ -21,7 +21,8 @@ from src.config.inference import (InferenceConfig, validate_ablation, validate_k
                                   validate_single_process)
 from src.inference.utils.assemble import (build_inference_model, latents_path, render_record,
                                     write_json)
-from src.inference.render import conditioning_mode, decode_and_save, generate_latents, load_prompt
+from src.inference.render import decode_and_save, generate_latents
+from src.inference.utils.prompt_cache import conditioning_mode, load_prompt
 
 
 def main():

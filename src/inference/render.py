@@ -1,6 +1,5 @@
-"""Render glue shared by every inference entrypoint: load_models, load_prompt,
-generate_latents (the denoising loop + packed layout), and decode_and_save with its
-atomic .partial.mp4 write.
+"""The render shared by every inference entrypoint: generate_latents (the packed layout and
+the denoising loop) and decode_and_save with its atomic .partial.mp4 write.
 """
 import os
 import time
@@ -8,8 +7,7 @@ from types import SimpleNamespace
 
 import torch
 
-from diffusers import (AutoencoderKLMiniMaxH3, AutoencoderKLMiniMaxH3Audio,
-                       MiniMaxH3Scheduler, MiniMaxH3Transformer3DModel)
+from diffusers import MiniMaxH3Scheduler
 from diffusers.modular_pipelines.minimax_h3.before_denoise import (
     MiniMaxH3PrepareLayoutStep, MiniMaxH3Ref2VAPrepareLayoutStep, patchify_video_latents)
 from diffusers.modular_pipelines.minimax_h3.modular_pipeline import (
@@ -18,14 +16,10 @@ from diffusers.modular_pipelines.minimax_h3.modular_pipeline import (
     audio_latent_num_frames, video_latent_num_frames)
 from diffusers.utils.export_utils import encode_video
 
+from src.inference.utils.prompt_cache import is_reference_request
 from src.models.sequence_layout import layout_from_indices
-from src.paths import H3_BASE, resolve_weights
 from src.models.hybrid_transform import iter_hybrids, set_layout
 
-# The release copy under the repository (transformer/ vae/ audio_vae/); the decoders and
-# the dense `checkpoint=null` render load from here unless the config names another root
-# (`vae_source` / `base_source`). Relative paths resolve against the repo root, not cwd.
-DEFAULT_MODEL_ROOT = H3_BASE
 # The production canvas, 768x1344, through the 16x spatial VAE.
 LATENT_H, LATENT_W = 48, 84
 # Mirrors of MiniMaxH3ModularPipeline.pixel_mean / pixel_std / keyframe_noise_aug: those
@@ -33,61 +27,6 @@ LATENT_H, LATENT_W = 48, 84
 # 0.999 is the t the fl2va keyframes are held at, just short of clean.
 PIXEL_MEAN, PIXEL_STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
 KEYFRAME_NOISE_AUG = 0.999
-# The anchor encode_keyframes.py gives a reference image (`--refs`); a cache whose anchors
-# are all of it is a ref2va-like request and takes the ref2va layout in generate_latents.
-REFERENCE_ANCHOR = "ref"
-KEYFRAME_MODES = {("first",): "i2va", ("last",): "l2va", ("first", "last"): "fl2va"}
-
-
-def is_reference_request(anchors):
-    return bool(anchors) and all(anchor == REFERENCE_ANCHOR for anchor in anchors)
-
-
-def conditioning_mode(anchors):
-    """What a cache's anchors make the request: i2va, l2va or fl2va by which keyframes are
-    anchored, ref2va when every anchor is a reference."""
-    if is_reference_request(anchors):
-        return "ref2va"
-    return KEYFRAME_MODES[tuple(anchors)]
-
-
-def load_models(model_root: str, device: str, vae_source: str = None,
-                load_decoders: bool = True):
-    """`model_root` holds the transformer; both decoders come from `vae_source`,
-    default the release copy. Ranks that never decode pass `load_decoders=False` and
-    get (transformer, None, None).
-
-    The decoders stay on the CPU: `decode_and_save` brings them to the GPU when
-    denoising is over. Their 10 GB next to the bf16 transformer, which is what the card
-    holds until the fp8 conversion, is what an 80 GB card does not have."""
-    vae_source = resolve_weights(vae_source or DEFAULT_MODEL_ROOT)
-    model_root = resolve_weights(model_root)
-    transformer = MiniMaxH3Transformer3DModel.from_pretrained(
-        model_root, subfolder="transformer", torch_dtype=torch.bfloat16
-    ).to(device)
-    transformer.eval().requires_grad_(False)
-
-    if not load_decoders:
-        return transformer, None, None
-
-    vae = AutoencoderKLMiniMaxH3.from_pretrained(vae_source, subfolder="vae")
-    audio_vae = AutoencoderKLMiniMaxH3Audio.from_pretrained(vae_source, subfolder="audio_vae")
-    vae.eval()
-    audio_vae.eval()
-    return transformer, vae, audio_vae
-
-
-def load_prompt(prompt_file: str, device: str):
-    """A prompt cache from encode_prompt.py (t2va) or encode_keyframes.py (keyframes or
-    references); both carry prompt_embeds and text_token_tags. Returns (prompt_embeds,
-    text_token_tags, conditions); `conditions` is (keyframe_anchors, condition_latents)
-    for a keyframe or reference cache, else None."""
-    text = torch.load(prompt_file, map_location="cpu", weights_only=True)
-    conditions = None
-    if text.get("keyframe_anchors"):
-        conditions = (tuple(text["keyframe_anchors"]),
-                      [c.to(device, torch.float32) for c in text["condition_latents"]])
-    return text["prompt_embeds"].to(device, torch.bfloat16), text["text_token_tags"], conditions
 
 
 @torch.no_grad()
