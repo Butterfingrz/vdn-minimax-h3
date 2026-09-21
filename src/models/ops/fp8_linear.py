@@ -305,17 +305,19 @@ def convert_linear_to_fp8(model, min_width=MIN_WIDTH, skip_end_blocks=SKIP_END_B
     One Linear at a time, and the bf16 one is unreferenced the moment its parent is
     repointed: peak memory is the model plus a single fp8 weight, and it falls from
     there. There is no way back -- see the header.
+
+    The work list therefore names (parent, attribute) and never the Linears themselves.
+    A list of modules would keep every bf16 weight alive until the loop ended, and the
+    peak would be the bf16 model plus ALL the fp8 copies: 66 + 21 GiB, which an 80 GB
+    card does not hold.
     """
     skip = _blocks_to_skip(model, skip_end_blocks)
-    swapped = 0
-    for parent in list(model.modules()):
-        for name, child in list(parent.named_children()):
-            if not isinstance(child, nn.Linear):
-                continue
-            if child.in_features < min_width or child.out_features < min_width:
-                continue
-            if id(child) in skip:
-                continue
-            setattr(parent, name, Fp8Linear(child).to(child.weight.device))
-            swapped += 1
-    return swapped
+    targets = [(parent, name) for parent in model.modules()
+               for name, child in parent.named_children()
+               if isinstance(child, nn.Linear) and child.in_features >= min_width
+               and child.out_features >= min_width and id(child) not in skip]
+    for parent, name in targets:
+        child = getattr(parent, name)
+        setattr(parent, name, Fp8Linear(child).to(child.weight.device))
+        del child
+    return len(targets)

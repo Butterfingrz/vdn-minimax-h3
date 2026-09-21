@@ -55,7 +55,11 @@ def load_models(model_root: str, device: str, vae_source: str = None,
                 load_decoders: bool = True):
     """`model_root` holds the transformer; both decoders come from `vae_source`,
     default the release copy. Ranks that never decode pass `load_decoders=False` and
-    get (transformer, None, None)."""
+    get (transformer, None, None).
+
+    The decoders stay on the CPU: `decode_and_save` brings them to the GPU when
+    denoising is over. Their 10 GB next to the bf16 transformer, which is what the card
+    holds until the fp8 conversion, is what an 80 GB card does not have."""
     vae_source = resolve_weights(vae_source or DEFAULT_MODEL_ROOT)
     model_root = resolve_weights(model_root)
     transformer = MiniMaxH3Transformer3DModel.from_pretrained(
@@ -66,8 +70,8 @@ def load_models(model_root: str, device: str, vae_source: str = None,
     if not load_decoders:
         return transformer, None, None
 
-    vae = AutoencoderKLMiniMaxH3.from_pretrained(vae_source, subfolder="vae").to(device)
-    audio_vae = AutoencoderKLMiniMaxH3Audio.from_pretrained(vae_source, subfolder="audio_vae").to(device)
+    vae = AutoencoderKLMiniMaxH3.from_pretrained(vae_source, subfolder="vae")
+    audio_vae = AutoencoderKLMiniMaxH3Audio.from_pretrained(vae_source, subfolder="audio_vae")
     vae.eval()
     audio_vae.eval()
     return transformer, vae, audio_vae
@@ -222,6 +226,8 @@ def generate_latents(transformer, prompt_embeds, text_token_tags, num_frames, nu
 
 @torch.no_grad()
 def decode_and_save(latents, audio_latents, vae, audio_vae, out_path: str, device: str):
+    vae.to(device)
+    audio_vae.to(device)
     latents_mean = torch.tensor(vae.config.latents_mean, device=device).view(1, -1, 1, 1, 1)
     latents_std = torch.tensor(vae.config.latents_std, device=device).view(1, -1, 1, 1, 1)
     with torch.autocast(device_type="cuda", dtype=torch.float16):
